@@ -1,0 +1,14 @@
+{
+  "name": "467-home-server",
+  "version": "1.0.0",
+  "description": "4/67 Home Dormitory Management System - Backend API",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js"
+  },
+  "keywords": ["dormitory", "management", "api"],
+  "author": "",
+  "license": "MIT"
+}

@@ -1,0 +1,61 @@
+import Expense from '../models/expense.model.js';
+import { sendSuccess, parsePagination, buildPagination } from '../utils/apiResponse.js';
+import { notFoundError } from '../utils/AppError.js';
+
+export const getExpenses = async (req, res, next) => {
+  try {
+    const { page, limit, skip } = parsePagination(req.query);
+    const { category, month, year } = req.query;
+    const filter = {};
+    if (category) filter.category = category;
+    if (month) filter.month = Number(month);
+    if (year) filter.year = Number(year);
+    const [expenses, total] = await Promise.all([
+      Expense.find(filter).populate('addedBy', 'displayName').sort({ date: -1 }).skip(skip).limit(limit),
+      Expense.countDocuments(filter),
+    ]);
+    sendSuccess(res, expenses, 'Expenses retrieved', 200, buildPagination(page, limit, total));
+  } catch (err) { next(err); }
+};
+
+export const getExpenseSummary = async (req, res, next) => {
+  try {
+    const { month, year } = req.query;
+    const match = {};
+    if (month) match.month = Number(month);
+    if (year) match.year = Number(year);
+    const summary = await Expense.aggregate([
+      { $match: match },
+      { $group: { _id: '$category', total: { $sum: '$amount' }, count: { $sum: 1 } } },
+      { $sort: { total: -1 } },
+    ]);
+    const grandTotal = summary.reduce((acc, s) => acc + s.total, 0);
+    sendSuccess(res, { summary, grandTotal }, 'Expense summary retrieved');
+  } catch (err) { next(err); }
+};
+
+export const createExpense = async (req, res, next) => {
+  try {
+    const date = req.body.date ? new Date(req.body.date) : new Date();
+    const month = date.getMonth() + 1;
+    const year = date.getFullYear();
+    const expense = await Expense.create({ ...req.body, month, year, addedBy: req.user._id });
+    sendSuccess(res, expense, 'Expense added', 201);
+  } catch (err) { next(err); }
+};
+
+export const updateExpense = async (req, res, next) => {
+  try {
+    const expense = await Expense.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!expense) return next(notFoundError('Expense'));
+    sendSuccess(res, expense, 'Expense updated');
+  } catch (err) { next(err); }
+};
+
+export const deleteExpense = async (req, res, next) => {
+  try {
+    const expense = await Expense.findByIdAndDelete(req.params.id);
+    if (!expense) return next(notFoundError('Expense'));
+    sendSuccess(res, null, 'Expense deleted');
+  } catch (err) { next(err); }
+};
