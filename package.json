@@ -4,11 +4,28 @@
   "description": "4/67 Home Dormitory Management System - Backend API",
   "main": "server.js",
   "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js"
   },
   "keywords": ["dormitory", "management", "api"],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "express-validator": "^7.3.2",
+    "firebase-admin": "^14.1.0",
+    "helmet": "^8.2.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.7.3",
+    "morgan": "^1.11.0",
+    "socket.io": "^4.8.3",
+    "winston": "^3.19.0"
+  }
 }

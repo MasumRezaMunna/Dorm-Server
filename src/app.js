@@ -26,7 +26,10 @@ import dashboardRoutes from './routes/dashboard.routes.js';
 const app = express();
 
 // ─── Security Middleware ─────────────────────────────────────────────────────
-app.use(helmet());
+// crossOriginOpenerPolicy is disabled because it sets `COOP: same-origin` which
+// breaks Firebase signInWithPopup — the popup can no longer communicate back to
+// the opener window (window.closed / window.close calls are blocked by the browser).
+app.use(helmet({ crossOriginOpenerPolicy: false }));
 app.use(rateLimiter);     // Rate limiting
 
 // ─── CORS ────────────────────────────────────────────────────────────────────
