@@ -3,6 +3,7 @@ import User from '../models/user.model.js';
 import jwt from 'jsonwebtoken';
 import { sendSuccess, sendError } from '../utils/apiResponse.js';
 import { AppError } from '../utils/AppError.js';
+import Member from '../models/member.model.js';
 
 /**
  * POST /api/auth/google
@@ -53,9 +54,24 @@ export const googleLogin = async (req, res, next) => {
 /**
  * GET /api/auth/me
  * Returns the current authenticated user (from req.user set by requireAuth middleware)
+ * Also ensures managers have a Member profile created automatically.
  */
-export const getMe = (req, res) => {
-  sendSuccess(res, req.user, 'User retrieved');
+export const getMe = async (req, res, next) => {
+  try {
+    if (req.user.role === 'manager') {
+      const existingMember = await Member.findOne({ userId: req.user._id });
+      if (!existingMember) {
+        const count = await Member.countDocuments();
+        const memberId = `MEM-${String(count + 1).padStart(3, '0')}`;
+        await Member.create({
+          userId: req.user._id,
+          memberId,
+          status: 'active'
+        });
+      }
+    }
+    sendSuccess(res, req.user, 'User retrieved');
+  } catch (err) { next(err); }
 };
 
 /**
