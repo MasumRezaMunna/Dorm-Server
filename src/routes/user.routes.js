@@ -5,11 +5,13 @@ import {
   getUserById,
   updateUserRole,
   deactivateUser,
+  getPendingUsers,
 } from '../controllers/user.controller.js';
 
 const router = Router();
 
 router.get('/', requireManager, getUsers);
+router.get('/pending', requireManager, getPendingUsers);
 router.get('/:id', requireAuth, getUserById);
 router.put('/:id/role', requireManager, updateUserRole);
 router.put('/:id/deactivate', requireManager, deactivateUser);

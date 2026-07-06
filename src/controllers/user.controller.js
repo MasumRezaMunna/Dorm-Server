@@ -1,4 +1,5 @@
 import User from '../models/user.model.js';
+import Member from '../models/member.model.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 import { notFoundError } from '../utils/AppError.js';
 import { parsePagination, buildPagination } from '../utils/apiResponse.js';
@@ -11,6 +12,20 @@ export const getUsers = async (req, res, next) => {
       User.countDocuments(),
     ]);
     sendSuccess(res, users, 'Users retrieved', 200, buildPagination(page, limit, total));
+  } catch (err) { next(err); }
+};
+
+export const getPendingUsers = async (req, res, next) => {
+  try {
+    const members = await Member.find().select('userId');
+    const memberUserIds = members.map(m => m.userId);
+
+    const pendingUsers = await User.find({
+      _id: { $nin: memberUserIds },
+      role: 'member'
+    }).sort({ createdAt: -1 });
+
+    sendSuccess(res, pendingUsers, 'Pending users retrieved');
   } catch (err) { next(err); }
 };
 
