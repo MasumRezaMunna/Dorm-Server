@@ -98,10 +98,10 @@ export const getMonthlyDetail = async (req, res, next) => {
     // 3. Total meals across all members
     const totalMeals = mealAgg.reduce((s, m) => s + m.totalMeals, 0);
 
-    // 4. Meal rate: grocery cost ÷ total meals (fallback to settings mealRate)
+    // 4. Meal rate: total expenses ÷ total meals (fallback to settings mealRate)
     const settings = await Settings.findOne();
     const fallbackRate = settings?.mealRate || 0;
-    const mealRate = totalMeals > 0 ? groceryTotal / totalMeals : fallbackRate;
+    const mealRate = totalMeals > 0 ? totalExpense / totalMeals : fallbackRate;
 
     // 5. Bills for this month (to get paid amounts per member)
     const bills = await Bill.find({ month, year }).populate({
