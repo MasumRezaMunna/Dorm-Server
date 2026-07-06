@@ -8,10 +8,16 @@ let io;
  * Initialize Socket.IO server attached to the HTTP server.
  * Exported `io` instance is used anywhere in the app to emit events.
  */
+const ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  ...(process.env.CLIENT_URL ? [process.env.CLIENT_URL] : []),
+];
+
 export const initSocket = (httpServer) => {
   io = new Server(httpServer, {
     cors: {
-      origin: process.env.CLIENT_URL || 'http://localhost:5173',
+      origin: ALLOWED_ORIGINS,
       methods: ['GET', 'POST'],
       credentials: true,
     },

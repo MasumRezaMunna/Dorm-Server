@@ -33,8 +33,22 @@ app.use(helmet({ crossOriginOpenerPolicy: false }));
 app.use(rateLimiter);     // Rate limiting
 
 // ─── CORS ────────────────────────────────────────────────────────────────────
+// Allowlist: always permit localhost for dev + any CLIENT_URL set via env var.
+const ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  ...(process.env.CLIENT_URL ? [process.env.CLIENT_URL] : []),
+];
+
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    // Allow non-browser requests (curl, Postman, server-to-server) and allowlisted origins
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS: Origin '${origin}' not allowed`));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
