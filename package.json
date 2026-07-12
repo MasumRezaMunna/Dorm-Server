@@ -11,7 +11,11 @@
     "dev": "node --watch server.js",
     "start": "node server.js"
   },
-  "keywords": ["dormitory", "management", "api"],
+  "keywords": [
+    "dormitory",
+    "management",
+    "api"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
@@ -23,6 +27,7 @@
     "firebase-admin": "^14.1.0",
     "helmet": "^8.2.0",
     "jsonwebtoken": "^9.0.3",
+    "mongodb": "^7.5.0",
     "mongoose": "^9.7.3",
     "morgan": "^1.11.0",
     "socket.io": "^4.8.3",
