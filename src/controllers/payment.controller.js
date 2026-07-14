@@ -58,12 +58,11 @@ export const updatePayment = async (req, res, next) => {
     const payment = await Payment.findById(req.params.id);
     if (!payment) return next(notFoundError('Payment'));
 
-    const bill = await Bill.findById(payment.billId);
-    if (!bill) return next(notFoundError('Bill'));
+    const bill = payment.billId ? await Bill.findById(payment.billId) : null;
 
     const { amount, method, transactionId, note } = req.body;
     
-    if (amount !== undefined && amount !== payment.amount) {
+    if (amount !== undefined && amount !== payment.amount && bill) {
       const difference = amount - payment.amount;
       const overpay = bill.paidAmount + difference > bill.totalAmount;
       if (overpay) return next(new AppError(`Updated payment exceeds outstanding balance`, 400));
@@ -87,10 +86,12 @@ export const deletePayment = async (req, res, next) => {
     const payment = await Payment.findById(req.params.id);
     if (!payment) return next(notFoundError('Payment'));
 
-    const bill = await Bill.findById(payment.billId);
-    if (bill) {
-      bill.paidAmount -= payment.amount;
-      await bill.save();
+    if (payment.billId) {
+      const bill = await Bill.findById(payment.billId);
+      if (bill) {
+        bill.paidAmount -= payment.amount;
+        await bill.save();
+      }
     }
     
     await Payment.findByIdAndDelete(req.params.id);
