@@ -2,7 +2,8 @@ import MealEntry from '../models/mealEntry.model.js';
 import Member from '../models/member.model.js';
 import Expense from '../models/expense.model.js';
 import Settings from '../models/settings.model.js';
-import Bill from '../models/bill.model.js';
+import Payment from '../models/payment.model.js';
+import WeeklyMealPlan from '../models/weeklyMealPlan.model.js';
 import { sendSuccess, parsePagination, buildPagination } from '../utils/apiResponse.js';
 import { notFoundError } from '../utils/AppError.js';
 
@@ -77,7 +78,7 @@ export const getMonthlyDetail = async (req, res, next) => {
       },
     ]);
 
-    // 2. Total grocery expenses this month (meal-related costs)
+    // 2. Total grocery and common expenses this month
     const expenseAgg = await Expense.aggregate([
       { $match: { month, year } },
       {
@@ -86,7 +87,12 @@ export const getMonthlyDetail = async (req, res, next) => {
           totalExpense: { $sum: '$amount' },
           groceryTotal: {
             $sum: {
-              $cond: [{ $eq: ['$category', 'grocery'] }, '$amount', 0],
+              $cond: [{ $eq: ['$expenseType', 'Grocery'] }, '$amount', 0],
+            },
+          },
+          commonTotal: {
+            $sum: {
+              $cond: [{ $eq: ['$expenseType', 'Common'] }, '$amount', 0],
             },
           },
         },
@@ -94,20 +100,27 @@ export const getMonthlyDetail = async (req, res, next) => {
     ]);
     const totalExpense  = expenseAgg[0]?.totalExpense  || 0;
     const groceryTotal  = expenseAgg[0]?.groceryTotal  || 0;
+    const commonTotal   = expenseAgg[0]?.commonTotal   || 0;
 
     // 3. Total meals across all members
     const totalMeals = mealAgg.reduce((s, m) => s + m.totalMeals, 0);
 
-    // 4. Meal rate: total expenses ÷ total meals (fallback to settings mealRate)
+    // 4. Meal rate: grocery-only expenses ÷ total meals
     const settings = await Settings.findOne();
     const fallbackRate = settings?.mealRate || 0;
-    const mealRate = totalMeals > 0 ? totalExpense / totalMeals : fallbackRate;
+    const mealRate = totalMeals > 0 ? groceryTotal / totalMeals : fallbackRate;
 
-    // 5. Bills for this month (to get paid amounts per member)
-    const bills = await Bill.find({ month, year }).populate({
-      path: 'memberId',
-      populate: { path: 'userId', select: 'displayName email photoURL' },
-    });
+    // 4b. Common cost per member (split equally among active members)
+    const activeMembersCount = await Member.countDocuments({ status: 'active' });
+    const commonCostPerMember = activeMembersCount > 0 ? Math.round((commonTotal / activeMembersCount) * 100) / 100 : 0;
+
+    // 5. Aggregate total paid per member from Payment records for this month
+    const monthStart = new Date(year, month - 1, 1);
+    const monthEnd   = new Date(year, month, 1); // exclusive upper bound
+    const paymentAgg = await Payment.aggregate([
+      { $match: { paidAt: { $gte: monthStart, $lt: monthEnd } } },
+      { $group: { _id: '$memberId', totalPaid: { $sum: '$amount' } } },
+    ]);
 
     // 6. All active members
     const allMembers = await Member.find({ status: 'active' }).populate('userId', 'displayName email photoURL');
@@ -116,18 +129,16 @@ export const getMonthlyDetail = async (req, res, next) => {
     const mealMap = {};
     mealAgg.forEach(m => { mealMap[m._id.toString()] = m; });
 
-    const billMap = {};
-    bills.forEach(b => { billMap[b.memberId._id?.toString() || b.memberId.toString()] = b; });
+    const paymentMap = {};
+    paymentAgg.forEach(p => { paymentMap[p._id.toString()] = p.totalPaid; });
 
     const members = allMembers.map(member => {
       const mid    = member._id.toString();
       const meals  = mealMap[mid] || { totalLunch: 0, totalDinner: 0, totalMeals: 0 };
-      const bill   = billMap[mid];
-      const mealCost = Math.round(meals.totalMeals * mealRate * 100) / 100;
-      const paidAmount  = bill?.paidAmount    || 0;
-      const totalBill   = bill?.totalAmount   || 0;
-      const balance     = paidAmount - totalBill;          // positive = overpaid, negative = due
-      const afterMeal   = paidAmount - mealCost;           // remaining after meal deduction
+      const mealCost    = Math.round(meals.totalMeals * mealRate * 100) / 100;
+      const totalCost   = Math.round((mealCost + commonCostPerMember) * 100) / 100;
+      const paidAmount  = paymentMap[mid] || 0;            // sum of all payments this month
+      const afterMeal   = paidAmount - totalCost;          // remaining after meal + common deduction
 
       return {
         memberId: mid,
@@ -139,11 +150,10 @@ export const getMonthlyDetail = async (req, res, next) => {
         totalDinner: meals.totalDinner,
         totalMeals:  meals.totalMeals,
         mealCost,
+        commonCostPerMember,
+        totalCost,
         paidAmount,
-        totalBill,
-        balance,
         afterMeal,
-        billStatus: bill?.status || 'pending',
       };
     });
 
@@ -152,6 +162,8 @@ export const getMonthlyDetail = async (req, res, next) => {
       year,
       totalExpense,
       groceryTotal,
+      commonTotal,
+      commonCostPerMember,
       totalMeals,
       mealRate: Math.round(mealRate * 100) / 100,
       members,
@@ -236,5 +248,66 @@ export const getMyMeals = async (req, res, next) => {
 
     const meals = await MealEntry.find({ memberId: member._id, month, year }).sort({ date: -1 });
     sendSuccess(res, meals, 'My meals retrieved');
+  } catch (err) { next(err); }
+};
+
+const getMondayMidnightLocal = (dateString) => {
+  const d = dateString ? new Date(dateString) : new Date();
+  d.setHours(0, 0, 0, 0);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  d.setDate(diff);
+  return d;
+};
+
+export const getWeeklyPlan = async (req, res, next) => {
+  try {
+    const weekStart = getMondayMidnightLocal(req.query.date);
+    
+    let plan = await WeeklyMealPlan.findOne({ weekStart });
+    
+    if (!plan) {
+      const defaultDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(dayName => ({
+        dayName,
+        lunch: true,
+        dinner: true,
+        lunchNote: '',
+        dinnerNote: ''
+      }));
+      
+      plan = await WeeklyMealPlan.create({
+        weekStart,
+        days: defaultDays
+      });
+    }
+    
+    sendSuccess(res, plan, 'Weekly meal plan retrieved');
+  } catch (err) { next(err); }
+};
+
+export const upsertWeeklyPlan = async (req, res, next) => {
+  try {
+    const weekStart = getMondayMidnightLocal(req.body.weekStart || req.query.date);
+    const { days } = req.body;
+    
+    if (!days || !Array.isArray(days)) {
+      return res.status(400).json({ success: false, message: 'Invalid days data' });
+    }
+    
+    let plan = await WeeklyMealPlan.findOne({ weekStart });
+    
+    if (plan) {
+      plan.days = days;
+      plan.updatedBy = req.user._id;
+      await plan.save();
+    } else {
+      plan = await WeeklyMealPlan.create({
+        weekStart,
+        days,
+        updatedBy: req.user._id
+      });
+    }
+    
+    sendSuccess(res, plan, 'Weekly meal plan updated');
   } catch (err) { next(err); }
 };

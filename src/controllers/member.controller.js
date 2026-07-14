@@ -18,7 +18,7 @@ export const getMembers = async (req, res, next) => {
     if (status) filter.status = status;
 
     const [members, total] = await Promise.all([
-      Member.find(filter).populate('userId', 'displayName email role').populate('roomId', 'roomNumber').sort({ createdAt: -1 }).skip(skip).limit(limit),
+      Member.find(filter).populate('userId', 'displayName email role photoURL').populate('roomId', 'roomNumber').sort({ createdAt: -1 }).skip(skip).limit(limit),
       Member.countDocuments(filter),
     ]);
 

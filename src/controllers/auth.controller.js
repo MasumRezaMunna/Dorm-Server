@@ -44,7 +44,7 @@ export const googleLogin = async (req, res, next) => {
     return sendSuccess(res, { token, user }, 'Login successful', 200);
   } catch (err) {
     // Firebase verification failure
-    if (err.code?.startsWith('auth/')) {
+    if (typeof err.code === 'string' && err.code.startsWith('auth/')) {
       return next(new AppError('Invalid or expired Firebase token', 401));
     }
     next(err);

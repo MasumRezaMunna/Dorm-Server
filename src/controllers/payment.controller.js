@@ -13,7 +13,7 @@ export const getPayments = async (req, res, next) => {
     if (memberId) filter.memberId = memberId;
     if (billId) filter.billId = billId;
     const [payments, total] = await Promise.all([
-      Payment.find(filter).populate('memberId billId receivedBy').sort({ paidAt: -1 }).skip(skip).limit(limit),
+      Payment.find(filter).populate('memberId receivedBy').sort({ paidAt: -1 }).skip(skip).limit(limit),
       Payment.countDocuments(filter),
     ]);
     sendSuccess(res, payments, 'Payments retrieved', 200, buildPagination(page, limit, total));
@@ -22,28 +22,33 @@ export const getPayments = async (req, res, next) => {
 
 export const createPayment = async (req, res, next) => {
   try {
-    const { billId, amount } = req.body;
-    const bill = await Bill.findById(billId);
-    if (!bill) return next(notFoundError('Bill'));
-    const overpay = bill.paidAmount + amount > bill.totalAmount;
-    if (overpay) return next(new AppError(`Payment exceeds outstanding balance of ৳${bill.totalAmount - bill.paidAmount}`, 400));
-    const payment = await Payment.create({ ...req.body, receivedBy: req.user._id });
-    // Update bill paid amount
-    bill.paidAmount += amount;
-    await bill.save(); // triggers status update via pre-save hook
+    const { memberId, amount, method, transactionId, note } = req.body;
     
-    const member = await Member.findById(payment.memberId || bill.memberId);
+    if (!memberId || !amount) {
+      return next(new AppError('Member ID and Amount are required', 400));
+    }
+    
+    const payment = await Payment.create({ 
+      memberId, 
+      amount, 
+      method, 
+      transactionId, 
+      note, 
+      receivedBy: req.user._id 
+    });
+    
+    const member = await Member.findById(memberId);
     if (member) {
-      createNotification(member.userId, 'Payment Received', `Payment of ৳${amount} recorded for your bill`, 'payment', '/member/bills');
+      createNotification(member.userId, 'Payment Received', `Payment of ৳${amount} recorded to your account`, 'payment', '/dashboard');
     }
     
     sendSuccess(res, payment, 'Payment recorded', 201);
   } catch (err) { next(err); }
 };
 
-export const getPaymentsByBill = async (req, res, next) => {
+export const getPaymentsByMember = async (req, res, next) => {
   try {
-    const payments = await Payment.find({ billId: req.params.billId }).populate('receivedBy', 'displayName').sort({ paidAt: -1 });
+    const payments = await Payment.find({ memberId: req.params.memberId }).populate('receivedBy', 'displayName').sort({ paidAt: -1 });
     sendSuccess(res, payments, 'Payments retrieved');
   } catch (err) { next(err); }
 };

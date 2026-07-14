@@ -12,7 +12,6 @@ import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/user.routes.js';
 import memberRoutes from './routes/member.routes.js';
 import roomRoutes from './routes/room.routes.js';
-import billRoutes from './routes/bill.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
 import expenseRoutes from './routes/expense.routes.js';
 import mealRoutes from './routes/meal.routes.js';
@@ -22,6 +21,7 @@ import visitorRoutes from './routes/visitor.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
 import settingsRoutes from './routes/settings.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
+import marketScheduleRoutes from './routes/marketSchedule.routes.js';
 
 const app = express();
 
@@ -76,7 +76,6 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/members', memberRoutes);
 app.use('/api/rooms', roomRoutes);
-app.use('/api/bills', billRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/meals', mealRoutes);
@@ -86,6 +85,7 @@ app.use('/api/visitors', visitorRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/market-schedules', marketScheduleRoutes);
 
 // ─── Error Handling ──────────────────────────────────────────────────────────
 app.use(notFound);

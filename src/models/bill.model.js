@@ -18,63 +18,47 @@ const billSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
-    // Bill line items (BDT ৳)
-    rent: { type: Number, default: 0 },
-    electricity: { type: Number, default: 0 },
-    wifi: { type: Number, default: 0 },
-    water: { type: Number, default: 0 },
-    gas: { type: Number, default: 0 },
-    mealCost: { type: Number, default: 0 },
-    otherCharges: { type: Number, default: 0 },
-    otherChargesNote: { type: String },
-    // Calculated totals
     totalAmount: {
       type: Number,
       required: true,
+      min: 0,
+      default: 0,
     },
     paidAmount: {
       type: Number,
+      min: 0,
       default: 0,
     },
     status: {
       type: String,
-      enum: ['pending', 'partial', 'paid'],
+      enum: ['pending', 'partial', 'paid', 'overdue'],
       default: 'pending',
-      index: true,
     },
     dueDate: {
       type: Date,
-    },
-    generatedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
     },
     note: String,
   },
   {
     timestamps: true,
-    toJSON: { virtuals: true },
-    toObject: { virtuals: true },
   }
 );
 
-// Compound index: one bill per member per month-year
-billSchema.index({ memberId: 1, month: 1, year: 1 }, { unique: true });
-
-// Virtual: outstanding balance
-billSchema.virtual('balance').get(function () {
-  return this.totalAmount - this.paidAmount;
-});
-
-// Auto-update status on save
-billSchema.pre('save', function () {
-  if (this.paidAmount >= this.totalAmount) {
-    this.status = 'paid';
-  } else if (this.paidAmount > 0) {
-    this.status = 'partial';
-  } else {
-    this.status = 'pending';
+// Auto-update status based on paidAmount vs totalAmount
+billSchema.pre('save', function (next) {
+  if (this.totalAmount > 0) {
+    if (this.paidAmount >= this.totalAmount) {
+      this.status = 'paid';
+    } else if (this.paidAmount > 0) {
+      this.status = 'partial';
+    } else {
+      this.status = 'pending';
+    }
   }
+  next();
 });
+
+// Compound index to ensure one bill per member per month/year
+billSchema.index({ memberId: 1, month: 1, year: 1 }, { unique: true });
 
 export default mongoose.model('Bill', billSchema);

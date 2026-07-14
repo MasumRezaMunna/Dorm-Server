@@ -2,14 +2,14 @@ import mongoose from 'mongoose';
 
 const expenseSchema = new mongoose.Schema(
   {
-    description: {
+    title: {
       type: String,
       required: true,
       trim: true,
     },
-    category: {
+    expenseType: {
       type: String,
-      enum: ['grocery', 'utility', 'maintenance', 'salary', 'miscellaneous', 'other'],
+      enum: ['Grocery', 'Common'],
       required: true,
       index: true,
     },
@@ -29,17 +29,17 @@ const expenseSchema = new mongoose.Schema(
       type: String, // Firebase Storage URL
       default: null,
     },
-    addedBy: {
+    createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
     },
-    note: String,
+    notes: String,
   },
   { timestamps: true }
 );
 
 // Compound index for month/year filtering (dashboard analytics)
-expenseSchema.index({ month: 1, year: 1, category: 1 });
+expenseSchema.index({ month: 1, year: 1, expenseType: 1 });
 
 export default mongoose.model('Expense', expenseSchema);

@@ -5,13 +5,13 @@ import { notFoundError } from '../utils/AppError.js';
 export const getExpenses = async (req, res, next) => {
   try {
     const { page, limit, skip } = parsePagination(req.query);
-    const { category, month, year } = req.query;
+    const { expenseType, month, year } = req.query;
     const filter = {};
-    if (category) filter.category = category;
+    if (expenseType) filter.expenseType = expenseType;
     if (month) filter.month = Number(month);
     if (year) filter.year = Number(year);
     const [expenses, total] = await Promise.all([
-      Expense.find(filter).populate('addedBy', 'displayName').sort({ date: -1 }).skip(skip).limit(limit),
+      Expense.find(filter).populate('createdBy', 'displayName').sort({ date: -1 }).skip(skip).limit(limit),
       Expense.countDocuments(filter),
     ]);
     sendSuccess(res, expenses, 'Expenses retrieved', 200, buildPagination(page, limit, total));
@@ -26,7 +26,7 @@ export const getExpenseSummary = async (req, res, next) => {
     if (year) match.year = Number(year);
     const summary = await Expense.aggregate([
       { $match: match },
-      { $group: { _id: '$category', total: { $sum: '$amount' }, count: { $sum: 1 } } },
+      { $group: { _id: '$expenseType', total: { $sum: '$amount' }, count: { $sum: 1 } } },
       { $sort: { total: -1 } },
     ]);
     const grandTotal = summary.reduce((acc, s) => acc + s.total, 0);
@@ -39,7 +39,7 @@ export const createExpense = async (req, res, next) => {
     const date = req.body.date ? new Date(req.body.date) : new Date();
     const month = date.getMonth() + 1;
     const year = date.getFullYear();
-    const expense = await Expense.create({ ...req.body, month, year, addedBy: req.user._id });
+    const expense = await Expense.create({ ...req.body, month, year, createdBy: req.user._id });
     sendSuccess(res, expense, 'Expense added', 201);
   } catch (err) { next(err); }
 };

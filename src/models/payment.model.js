@@ -5,7 +5,6 @@ const paymentSchema = new mongoose.Schema(
     billId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Bill',
-      required: true,
       index: true,
     },
     memberId: {

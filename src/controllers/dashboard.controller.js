@@ -1,7 +1,6 @@
 import User from '../models/user.model.js';
 import Member from '../models/member.model.js';
 import Room from '../models/room.model.js';
-import Bill from '../models/bill.model.js';
 import Payment from '../models/payment.model.js';
 import Expense from '../models/expense.model.js';
 import Complaint from '../models/complaint.model.js';
@@ -10,6 +9,13 @@ import MealEntry from '../models/mealEntry.model.js';
 import Notification from '../models/notification.model.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 import { notFoundError } from '../utils/AppError.js';
+import { 
+  calculateTotalGroceryCost, 
+  calculateTotalCommonCost, 
+  calculateTotalExpense, 
+  calculateMealRate, 
+  calculateCommonCostPerMember 
+} from '../utils/calculations.js';
 
 export const getManagerDashboard = async (req, res, next) => {
   try {
@@ -22,32 +28,37 @@ export const getManagerDashboard = async (req, res, next) => {
       activeMembers,
       totalRooms,
       occupiedRooms,
-      pendingBills,
-      paidBills,
       recentComplaints,
       recentNotices,
       monthlyIncome,
-      monthlyExpenses,
+      expenses,
       recentNotifications,
+      totalMealsAgg,
     ] = await Promise.all([
       Member.countDocuments(),
       Member.countDocuments({ status: 'active' }),
       Room.countDocuments(),
       Room.countDocuments({ status: 'occupied' }),
-      Bill.countDocuments({ status: { $in: ['pending', 'partial'] } }),
-      Bill.countDocuments({ status: 'paid', month, year }),
       Complaint.find({ status: 'open' }).sort({ createdAt: -1 }).limit(5).populate({ path: 'memberId', populate: { path: 'userId', select: 'displayName' } }),
       Notice.find({ isPublished: true }).sort({ createdAt: -1 }).limit(3),
       Payment.aggregate([
         { $match: { paidAt: { $gte: new Date(year, month - 1, 1), $lt: new Date(year, month, 1) } } },
         { $group: { _id: null, total: { $sum: '$amount' } } },
       ]),
-      Expense.aggregate([
-        { $match: { month, year } },
-        { $group: { _id: null, total: { $sum: '$amount' } } },
-      ]),
+      Expense.find({ month, year }),
       Notification.find({ userId: req.user._id }).sort({ createdAt: -1 }).limit(5),
+      MealEntry.aggregate([
+        { $match: { month, year } },
+        { $group: { _id: null, total: { $sum: '$mealCount' } } }
+      ]),
     ]);
+
+    const groceryCost = calculateTotalGroceryCost(expenses);
+    const commonCost = calculateTotalCommonCost(expenses);
+    const totalExpenses = calculateTotalExpense(groceryCost, commonCost);
+    const totalMeals = totalMealsAgg[0]?.total || 0;
+    const mealRate = calculateMealRate(groceryCost, totalMeals);
+    const commonCostPerMember = calculateCommonCostPerMember(commonCost, activeMembers);
 
     const overview = {
       totalMembers,
@@ -55,11 +66,14 @@ export const getManagerDashboard = async (req, res, next) => {
       totalRooms,
       occupiedRooms,
       availableRooms: totalRooms - occupiedRooms,
-      pendingBills,
-      paidBills,
       monthlyIncome: monthlyIncome[0]?.total || 0,
-      monthlyExpenses: monthlyExpenses[0]?.total || 0,
-      netBalance: (monthlyIncome[0]?.total || 0) - (monthlyExpenses[0]?.total || 0),
+      monthlyExpenses: totalExpenses,
+      netBalance: (monthlyIncome[0]?.total || 0) - totalExpenses,
+      groceryCost,
+      commonCost,
+      totalMeals,
+      mealRate,
+      commonCostPerMember
     };
 
     sendSuccess(res, { overview, recentComplaints, recentNotifications }, 'Manager dashboard data retrieved');
@@ -75,20 +89,58 @@ export const getMemberDashboard = async (req, res, next) => {
     const month = now.getMonth() + 1;
     const year = now.getFullYear();
 
-    const [currentBill, recentBills, notices, mealStats, recentNotifications] = await Promise.all([
-      Bill.findOne({ memberId: member._id }).sort({ year: -1, month: -1 }),
-      Bill.find({ memberId: member._id }).sort({ year: -1, month: -1 }).limit(6),
+    const [notices, mealStats, recentNotifications, monthlyIncomeAgg, expenses, activeMembersCount, totalMealsAgg, memberPaymentsAgg] = await Promise.all([
       Notice.find({ isPublished: true }).sort({ isPinned: -1, createdAt: -1 }).limit(5),
       MealEntry.aggregate([
         { $match: { memberId: member._id, month, year } },
         { $group: { _id: null, total: { $sum: '$mealCount' } } }
       ]),
       Notification.find({ userId: req.user._id }).sort({ createdAt: -1 }).limit(5),
+      Payment.aggregate([
+        { $match: { paidAt: { $gte: new Date(year, month - 1, 1), $lt: new Date(year, month, 1) } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } },
+      ]),
+      Expense.find({ month, year }),
+      Member.countDocuments({ status: 'active' }),
+      MealEntry.aggregate([
+        { $match: { month, year } },
+        { $group: { _id: null, total: { $sum: '$mealCount' } } }
+      ]),
+      Payment.aggregate([
+        { $match: { memberId: member._id, paidAt: { $gte: new Date(year, month - 1, 1), $lt: new Date(year, month, 1) } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } },
+      ])
     ]);
 
     const mealThisMonth = mealStats[0]?.total || 0;
-
-    sendSuccess(res, { member, room: member.roomId, currentBill, recentBills, notices, mealThisMonth, recentNotifications }, 'Member dashboard data retrieved');
+    const dormIncome    = monthlyIncomeAgg[0]?.total   || 0;
+    const memberPaidThisMonth = memberPaymentsAgg[0]?.total || 0;
+    
+    const groceryCost = calculateTotalGroceryCost(expenses);
+    const commonCost = calculateTotalCommonCost(expenses);
+    const dormExpenses = calculateTotalExpense(groceryCost, commonCost);
+    
+    const dormRemaining = dormIncome - dormExpenses;
+    
+    const totalMeals = totalMealsAgg[0]?.total || 0;
+    const mealRate = calculateMealRate(groceryCost, totalMeals);
+    const commonCostPerMember = calculateCommonCostPerMember(commonCost, activeMembersCount);
+    sendSuccess(res, { 
+      member, 
+      room: member.roomId, 
+      notices, 
+      mealThisMonth, 
+      recentNotifications, 
+      dormIncome, 
+      dormExpenses, 
+      dormRemaining,
+      groceryCost,
+      commonCost,
+      totalMeals,
+      mealRate,
+      commonCostPerMember,
+      memberPaidThisMonth
+    }, 'Member dashboard data retrieved');
   } catch (err) { next(err); }
 };
 
