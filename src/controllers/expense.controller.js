@@ -1,6 +1,7 @@
 import Expense from '../models/expense.model.js';
 import { sendSuccess, parsePagination, buildPagination } from '../utils/apiResponse.js';
 import { notFoundError } from '../utils/AppError.js';
+import { calculateTotalGroceryCost, calculateTotalCommonCost } from '../utils/calculations.js';
 
 export const getExpenses = async (req, res, next) => {
   try {
@@ -15,6 +16,27 @@ export const getExpenses = async (req, res, next) => {
       Expense.countDocuments(filter),
     ]);
     sendSuccess(res, expenses, 'Expenses retrieved', 200, buildPagination(page, limit, total));
+  } catch (err) { next(err); }
+};
+
+// Read-only expense view for members (no auth restriction to manager)
+export const getMemberExpenses = async (req, res, next) => {
+  try {
+    const { page, limit, skip } = parsePagination(req.query);
+    const { expenseType, month, year } = req.query;
+    const filter = {};
+    if (expenseType) filter.expenseType = expenseType;
+    if (month) filter.month = Number(month);
+    if (year) filter.year = Number(year);
+    const [expenses, total] = await Promise.all([
+      Expense.find(filter).populate('createdBy', 'displayName').sort({ date: -1 }).skip(skip).limit(limit),
+      Expense.countDocuments(filter),
+    ]);
+    // Attach summary totals
+    const allExpenses = await Expense.find(filter);
+    const groceryCost = calculateTotalGroceryCost(allExpenses);
+    const commonCost = calculateTotalCommonCost(allExpenses);
+    sendSuccess(res, { expenses, groceryCost, commonCost, grandTotal: groceryCost + commonCost }, 'Expenses retrieved', 200, buildPagination(page, limit, total));
   } catch (err) { next(err); }
 };
 
