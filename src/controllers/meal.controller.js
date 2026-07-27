@@ -267,14 +267,25 @@ export const getWeeklyPlan = async (req, res, next) => {
     let plan = await WeeklyMealPlan.findOne({ weekStart });
     
     if (!plan) {
-      const defaultDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(dayName => ({
-        dayName,
-        lunch: true,
-        dinner: true,
-        lunchNote: '',
-        dinnerNote: ''
-      }));
-      
+      // Try to carry forward the most recent previous week's plan
+      const previousPlan = await WeeklyMealPlan.findOne({ weekStart: { $lt: weekStart } }).sort({ weekStart: -1 });
+
+      const defaultDays = previousPlan
+        ? previousPlan.days.map(d => ({
+            dayName: d.dayName,
+            lunch: d.lunch,
+            dinner: d.dinner,
+            lunchNote: d.lunchNote || '',
+            dinnerNote: d.dinnerNote || '',
+          }))
+        : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(dayName => ({
+            dayName,
+            lunch: true,
+            dinner: true,
+            lunchNote: '',
+            dinnerNote: ''
+          }));
+
       plan = await WeeklyMealPlan.create({
         weekStart,
         days: defaultDays
