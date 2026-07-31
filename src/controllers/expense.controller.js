@@ -58,10 +58,12 @@ export const getExpenseSummary = async (req, res, next) => {
 
 export const createExpense = async (req, res, next) => {
   try {
-    const date = req.body.date ? new Date(req.body.date) : new Date();
-    const month = date.getMonth() + 1;
-    const year = date.getFullYear();
-    const expense = await Expense.create({ ...req.body, month, year, createdBy: req.user._id });
+    const rawDate = req.body.date || new Date().toISOString().split('T')[0];
+    const [y, m] = rawDate.split('-');
+    const month = parseInt(m, 10);
+    const year = parseInt(y, 10);
+    const date = new Date(rawDate);
+    const expense = await Expense.create({ ...req.body, date, month, year, createdBy: req.user._id });
     sendSuccess(res, expense, 'Expense added', 201);
   } catch (err) { next(err); }
 };

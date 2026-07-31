@@ -180,10 +180,12 @@ export const getMonthlyDetail = async (req, res, next) => {
 
 export const createMealEntry = async (req, res, next) => {
   try {
-    const date = new Date(req.body.date || Date.now());
-    const month = date.getMonth() + 1;
-    const year = date.getFullYear();
-    const entry = await MealEntry.create({ ...req.body, month, year, addedBy: req.user._id });
+    const rawDate = req.body.date || new Date().toISOString().split('T')[0];
+    const [y, m] = rawDate.split('-');
+    const month = parseInt(m, 10);
+    const year = parseInt(y, 10);
+    const date = new Date(rawDate);
+    const entry = await MealEntry.create({ ...req.body, date, month, year, addedBy: req.user._id });
     sendSuccess(res, entry, 'Meal entry created', 201);
   } catch (err) { next(err); }
 };
@@ -212,9 +214,11 @@ export const createBulkMealEntries = async (req, res, next) => {
     }
 
     const operations = entries.map(entry => {
-      const date = new Date(entry.date);
-      const month = date.getMonth() + 1;
-      const year = date.getFullYear();
+      const rawDate = entry.date;
+      const [y, m] = rawDate.split('-');
+      const month = parseInt(m, 10);
+      const year = parseInt(y, 10);
+      const date = new Date(rawDate);
       const lunch  = entry.lunch  !== undefined ? Number(entry.lunch)  : (entry.mealCount ?? 0);
       const dinner = entry.dinner !== undefined ? Number(entry.dinner) : 0;
 
