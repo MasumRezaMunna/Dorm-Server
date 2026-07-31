@@ -16,7 +16,7 @@ initSocket(httpServer);
 // Connect to MongoDB then start server
 connectDB()
   .then(() => {
-    httpServer.listen(PORT, () => {
+    httpServer.listen(PORT, '0.0.0.0', () => {
       logger.info(`🚀 Server running on port ${PORT} [${process.env.NODE_ENV}]`);
     });
   })

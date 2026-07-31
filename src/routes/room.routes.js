@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { requireAuth, requireManager } from '../middlewares/auth.middleware.js';
 import {
-  getRooms, getRoomById, createRoom, updateRoom, deleteRoom, assignMember, vacateMember,
+  getRooms, getRoomById, createRoom, updateRoom, deleteRoom, assignMember, vacateMember, getMyRoom
 } from '../controllers/room.controller.js';
 
 const router = Router();
 
+router.get('/my', requireAuth, getMyRoom);
 router.get('/', requireAuth, getRooms);
 router.post('/', requireManager, createRoom);
 router.get('/:id', requireAuth, getRoomById);

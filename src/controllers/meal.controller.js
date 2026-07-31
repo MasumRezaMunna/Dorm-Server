@@ -7,6 +7,8 @@ import WeeklyMealPlan from '../models/weeklyMealPlan.model.js';
 import { sendSuccess, parsePagination, buildPagination } from '../utils/apiResponse.js';
 import { notFoundError } from '../utils/AppError.js';
 
+const roundTwo = (num) => Math.round((num || 0) * 100) / 100;
+
 export const getMealEntries = async (req, res, next) => {
   try {
     const { page, limit, skip } = parsePagination(req.query);
@@ -112,7 +114,7 @@ export const getMonthlyDetail = async (req, res, next) => {
 
     // 4b. Common cost per member (split equally among active members)
     const activeMembersCount = await Member.countDocuments({ status: 'active' });
-    const commonCostPerMember = activeMembersCount > 0 ? Math.round((commonTotal / activeMembersCount) * 100) / 100 : 0;
+    const commonCostPerMember = activeMembersCount > 0 ? roundTwo(commonTotal / activeMembersCount) : 0;
 
     // 5. Aggregate total paid per member from Payment records for this month
     const monthStart = new Date(year, month - 1, 1);
@@ -132,13 +134,18 @@ export const getMonthlyDetail = async (req, res, next) => {
     const paymentMap = {};
     paymentAgg.forEach(p => { paymentMap[p._id.toString()] = p.totalPaid; });
 
-    const members = allMembers.map(member => {
+    // Round rates first so that member calculations perfectly match the displayed rate
+    const roundedMealRate = roundTwo(mealRate);
+    const roundedCommonRate = roundTwo(commonCostPerMember);
+
+    const members = allMembers.map((member) => {
       const mid    = member._id.toString();
       const meals  = mealMap[mid] || { totalLunch: 0, totalDinner: 0, totalMeals: 0 };
-      const mealCost    = Math.round(meals.totalMeals * mealRate * 100) / 100;
-      const totalCost   = Math.round((mealCost + commonCostPerMember) * 100) / 100;
-      const paidAmount  = paymentMap[mid] || 0;            // sum of all payments this month
-      const afterMeal   = paidAmount - totalCost;          // remaining after meal + common deduction
+      const mealCost    = roundTwo(meals.totalMeals * roundedMealRate);
+      const commonCost  = roundedCommonRate;
+      const totalCost   = roundTwo(mealCost + commonCost);
+      const paidAmount  = paymentMap[mid] || 0;
+      const afterMeal   = roundTwo(paidAmount - totalCost);
 
       return {
         memberId: mid,
@@ -150,7 +157,7 @@ export const getMonthlyDetail = async (req, res, next) => {
         totalDinner: meals.totalDinner,
         totalMeals:  meals.totalMeals,
         mealCost,
-        commonCostPerMember,
+        commonCostPerMember: commonCost,
         totalCost,
         paidAmount,
         afterMeal,
@@ -165,7 +172,7 @@ export const getMonthlyDetail = async (req, res, next) => {
       commonTotal,
       commonCostPerMember,
       totalMeals,
-      mealRate: Math.round(mealRate * 100) / 100,
+      mealRate: roundTwo(mealRate),
       members,
     }, 'Monthly meal detail retrieved');
   } catch (err) { next(err); }

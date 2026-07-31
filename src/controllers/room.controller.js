@@ -27,6 +27,18 @@ export const getRoomById = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+export const getMyRoom = async (req, res, next) => {
+  try {
+    const member = await Member.findOne({ userId: req.user._id });
+    if (!member || !member.roomId) return next(notFoundError('Room Assignment'));
+    
+    const room = await Room.findById(member.roomId).populate({ path: 'members', populate: { path: 'userId', select: 'displayName email photoURL' } });
+    if (!room) return next(notFoundError('Room'));
+    
+    sendSuccess(res, room, 'My room retrieved');
+  } catch (err) { next(err); }
+};
+
 export const createRoom = async (req, res, next) => {
   try {
     const room = await Room.create(req.body);
