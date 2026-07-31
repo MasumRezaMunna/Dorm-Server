@@ -8,10 +8,15 @@ import { createNotification } from './notification.controller.js';
 export const getPayments = async (req, res, next) => {
   try {
     const { page, limit, skip } = parsePagination(req.query);
-    const { memberId, billId } = req.query;
+    const { memberId, billId, month, year } = req.query;
     const filter = {};
     if (memberId) filter.memberId = memberId;
     if (billId) filter.billId = billId;
+    if (month && year) {
+      const m = Number(month);
+      const y = Number(year);
+      filter.paidAt = { $gte: new Date(y, m - 1, 1), $lt: new Date(y, m, 1) };
+    }
     const [payments, total] = await Promise.all([
       Payment.find(filter).populate('memberId receivedBy').sort({ paidAt: -1 }).skip(skip).limit(limit),
       Payment.countDocuments(filter),

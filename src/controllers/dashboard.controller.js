@@ -20,8 +20,8 @@ import {
 export const getManagerDashboard = async (req, res, next) => {
   try {
     const now = new Date();
-    const month = now.getMonth() + 1;
-    const year = now.getFullYear();
+    const month = req.query.month ? Number(req.query.month) : now.getMonth() + 1;
+    const year = req.query.year ? Number(req.query.year) : now.getFullYear();
 
     const [
       totalMembers,
@@ -86,8 +86,8 @@ export const getMemberDashboard = async (req, res, next) => {
     if (!member) return next(notFoundError('Member profile'));
 
     const now = new Date();
-    const month = now.getMonth() + 1;
-    const year = now.getFullYear();
+    const month = req.query.month ? Number(req.query.month) : now.getMonth() + 1;
+    const year = req.query.year ? Number(req.query.year) : now.getFullYear();
 
     const [notices, mealStats, recentNotifications, monthlyIncomeAgg, expenses, activeMembersCount, totalMealsAgg, memberPaymentsAgg] = await Promise.all([
       Notice.find({ isPublished: true }).sort({ isPinned: -1, createdAt: -1 }).limit(5),
@@ -147,8 +147,8 @@ export const getMemberDashboard = async (req, res, next) => {
 export const getCommunityStats = async (req, res, next) => {
   try {
     const now = new Date();
-    const month = now.getMonth() + 1;
-    const year = now.getFullYear();
+    const month = req.query.month ? Number(req.query.month) : now.getMonth() + 1;
+    const year = req.query.year ? Number(req.query.year) : now.getFullYear();
 
     // Get all active members populated with user info and room info
     const members = await Member.find({ status: 'active' }).populate('userId', 'displayName photoURL email').populate('roomId', 'roomNumber');

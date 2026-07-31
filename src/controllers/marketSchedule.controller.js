@@ -341,14 +341,20 @@ export const getRotationSuggestion = async (req, res, next) => {
  */
 export const getMarketStats = async (req, res, next) => {
   try {
-    const todayUTC    = toUTCMidnight(new Date());
+    const now = new Date();
+    const month = req.query.month ? Number(req.query.month) : now.getMonth() + 1;
+    const year  = req.query.year  ? Number(req.query.year)  : now.getFullYear();
+
+    const monthStart = new Date(Date.UTC(year, month - 1, 1));
+    const monthEnd   = new Date(Date.UTC(year, month, 1));
+    const todayUTC    = toUTCMidnight(now);
     const tomorrowUTC = new Date(todayUTC.getTime() + 86400000);
 
     const [total, upcoming, todayCount, completed] = await Promise.all([
-      MarketSchedule.countDocuments(),
-      MarketSchedule.countDocuments({ marketDate: { $gt: todayUTC } }),
+      MarketSchedule.countDocuments({ marketDate: { $gte: monthStart, $lt: monthEnd } }),
+      MarketSchedule.countDocuments({ marketDate: { $gt: todayUTC, $lt: monthEnd } }),
       MarketSchedule.countDocuments({ marketDate: { $gte: todayUTC, $lt: tomorrowUTC } }),
-      MarketSchedule.countDocuments({ marketDate: { $lt: todayUTC } }),
+      MarketSchedule.countDocuments({ marketDate: { $gte: monthStart, $lt: todayUTC } }),
     ]);
 
     sendSuccess(res, { total, upcoming, today: todayCount, completed }, 'Market stats retrieved');
