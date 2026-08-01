@@ -29,7 +29,7 @@ export const createPayment = async (req, res, next) => {
   try {
     const { memberId, amount, method, transactionId, note } = req.body;
     
-    if (!memberId || !amount) {
+    if (!memberId || amount === undefined || amount === null) {
       return next(new AppError('Member ID and Amount are required', 400));
     }
     
