@@ -5,7 +5,7 @@ const settingsSchema = new mongoose.Schema(
     // Singleton document — there's only one settings doc
     dormName: {
       type: String,
-      default: '4/67 Home',
+      default: '11/38 Home',
     },
     address: String,
     managerContact: String,

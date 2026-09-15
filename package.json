@@ -1,7 +1,7 @@
 {
   "name": "467-home-server",
   "version": "1.0.0",
-  "description": "4/67 Home Dormitory Management System - Backend API",
+  "description": "11/38 Home Dormitory Management System - Backend API",
   "main": "server.js",
   "type": "module",
   "engines": {
