@@ -22,6 +22,7 @@ import notificationRoutes from './routes/notification.routes.js';
 import settingsRoutes from './routes/settings.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 import marketScheduleRoutes from './routes/marketSchedule.routes.js';
+import chatRoutes from './routes/chat.routes.js';
 
 const app = express();
 
@@ -86,6 +87,7 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/market-schedules', marketScheduleRoutes);
+app.use('/api/chat', chatRoutes);
 
 // ─── Error Handling ──────────────────────────────────────────────────────────
 app.use(notFound);
