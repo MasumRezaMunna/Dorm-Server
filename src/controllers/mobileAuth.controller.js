@@ -123,11 +123,11 @@ export const mobileGoogleCallback = async (req, res) => {
       return res.redirect(`${APP_SCHEME}://auth?error=${encodeURIComponent('Account deactivated. Contact your manager.')}`);
     }
 
-    // 5. Issue our own JWT (same as the web login flow)
+    // 5. Issue our own JWT (same as the web login flow) with long-lived default (30 days)
     const appToken = jwt.sign(
       { id: user._id, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+      { expiresIn: process.env.JWT_EXPIRES_IN || '30d' }
     );
 
     // 6. Redirect to the app's deep link with the token and user data

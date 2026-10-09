@@ -34,16 +34,68 @@ export const googleLogin = async (req, res, next) => {
       return next(new AppError('Your account has been deactivated. Contact the manager.', 403));
     }
 
-    // Issue our own JWT
+    // Issue our own JWT with long-lived default (30 days)
     const token = jwt.sign(
       { id: user._id, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+      { expiresIn: process.env.JWT_EXPIRES_IN || '30d' }
     );
 
     return sendSuccess(res, { token, user }, 'Login successful', 200);
   } catch (err) {
     // Firebase verification failure
+    if (typeof err.code === 'string' && err.code.startsWith('auth/')) {
+      return next(new AppError('Invalid or expired Firebase token', 401));
+    }
+    next(err);
+  }
+};
+
+/**
+ * POST /api/auth/refresh
+ * Refreshes an authenticated session. Accepts either:
+ * 1. Firebase ID token in body { idToken }
+ * 2. Active backend JWT in Authorization header
+ * Issues a fresh 30-day JWT without requiring the user to re-authenticate.
+ */
+export const refreshToken = async (req, res, next) => {
+  try {
+    const { idToken } = req.body || {};
+
+    // Strategy 1: Firebase ID Token
+    if (idToken) {
+      const decoded = await auth.verifyIdToken(idToken);
+      const user = await User.findOne({ firebaseUid: decoded.uid });
+      if (!user) return next(new AppError('User not found', 404));
+      if (!user.isActive) return next(new AppError('Your account has been deactivated. Contact the manager.', 403));
+
+      const token = jwt.sign(
+        { id: user._id, role: user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: process.env.JWT_EXPIRES_IN || '30d' }
+      );
+      return sendSuccess(res, { token, user }, 'Token refreshed successfully');
+    }
+
+    // Strategy 2: Existing valid JWT in Authorization header
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      const oldToken = authHeader.split(' ')[1];
+      const decoded = jwt.verify(oldToken, process.env.JWT_SECRET);
+      const user = await User.findById(decoded.id);
+      if (!user) return next(new AppError('User not found', 404));
+      if (!user.isActive) return next(new AppError('Your account has been deactivated. Contact the manager.', 403));
+
+      const token = jwt.sign(
+        { id: user._id, role: user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: process.env.JWT_EXPIRES_IN || '30d' }
+      );
+      return sendSuccess(res, { token, user }, 'Token refreshed successfully');
+    }
+
+    return next(new AppError('Firebase ID token or Authorization header is required to refresh', 400));
+  } catch (err) {
     if (typeof err.code === 'string' && err.code.startsWith('auth/')) {
       return next(new AppError('Invalid or expired Firebase token', 401));
     }
