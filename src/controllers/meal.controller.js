@@ -21,7 +21,10 @@ export const getMealEntries = async (req, res, next) => {
       const d = new Date(date);
       const next = new Date(d);
       next.setDate(next.getDate() + 1);
-      filter.date = { $gte: d, $lt: next };
+      filter.$or = [
+        { date: { $gte: d, $lt: next } },
+        { date: date },
+      ];
     }
     const [entries, total] = await Promise.all([
       MealEntry.find(filter).populate({ path: 'memberId', populate: { path: 'userId', select: 'displayName' } }).sort({ date: -1 }).skip(skip).limit(limit),
@@ -224,9 +227,10 @@ export const createBulkMealEntries = async (req, res, next) => {
 
       return {
         updateOne: {
-          filter: { memberId: entry.member, date: entry.date },
+          filter: { memberId: entry.member, date },
           update: {
             $set: {
+              date,
               lunch,
               dinner,
               mealCount: lunch + dinner,
