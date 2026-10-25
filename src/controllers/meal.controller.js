@@ -76,13 +76,18 @@ function prevMonthYear(month, year) {
 }
 
 /**
- * Computes per-member afterMeal for a given (month, year) WITHOUT applying
- * any carry-forward from a prior period.  Used internally when we need to
- * calculate what the previous month's closing balance was.
+ * Computes per-member closing balance for a given (month, year).
  *
- * Returns a Map<memberId_string, afterMeal_number>.
+ * The closing balance is:
+ *   previousBalance (from storedCarryMap) + payments − (mealCost + commonCost)
+ *
+ * storedCarryMap: Map<memberId_string, previousBalance> already persisted in
+ * MonthlyBalance for (month, year).  Pass an empty Map when no prior carry-
+ * forward exists for that month (e.g. month 1 of the system's lifetime).
+ *
+ * Returns a Map<memberId_string, closingBalance_number>.
  */
-async function computeRawAfterMealMap(month, year) {
+async function computeRawAfterMealMap(month, year, storedCarryMap = new Map()) {
   const [mealAgg, expenseAgg, paymentAgg, allMembers] = await Promise.all([
     MealEntry.aggregate([
       { $match: { month, year } },
@@ -137,9 +142,12 @@ async function computeRawAfterMealMap(month, year) {
     const mid       = member._id.toString();
     const meals     = mealMap[mid]    || 0;
     const paid      = paymentMap[mid] || 0;
+    // Include any carry-forward that was applied to this month so the closing
+    // balance correctly accumulates across multiple consecutive months.
+    const carry     = storedCarryMap.get(mid) ?? 0;
     const mealCost  = roundTwo(meals * mealRate);
     const totalCost = roundTwo(mealCost + commonPerMem);
-    result.set(mid, roundTwo(paid - totalCost));
+    result.set(mid, roundTwo(carry + paid - totalCost));
   }
   return result;
 }
@@ -150,11 +158,25 @@ async function computeRawAfterMealMap(month, year) {
  * closing balance from (sourceMonth, sourceYear).
  *
  * Uses `$setOnInsert` so that if the document already exists it is NEVER
- * overwritten — preventing double-application on repeated API calls.
+ * overwritten — preventing double-application on repeated API calls or
+ * server restarts.
+ *
+ * The closing balance for the source month is computed as:
+ *   sourceMonth.previousBalance + sourceMonth.payments − sourceMonth.costs
+ * so that the carry-forward chain remains intact across three or more
+ * consecutive months.
  */
 async function ensureCarryForward(targetMonth, targetYear, sourceMonth, sourceYear) {
-  // Compute the previous month's closing afterMeal for each active member
-  const prevAfterMealMap = await computeRawAfterMealMap(sourceMonth, sourceYear);
+  // Read the source month's own stored carry-forward balance so that the
+  // closing balance snapshot includes any balance carried *into* that month
+  // from even earlier periods.  Without this, the chain breaks after month 2.
+  const sourceBalanceDocs = await MonthlyBalance.find({ month: sourceMonth, year: sourceYear });
+  const sourceCarryMap    = new Map(
+    sourceBalanceDocs.map(b => [b.memberId.toString(), b.previousBalance])
+  );
+
+  // Compute the previous month's closing balance for each active member
+  const prevAfterMealMap = await computeRawAfterMealMap(sourceMonth, sourceYear, sourceCarryMap);
 
   // Build bulk upsert operations — one per member
   const bulkOps = [];
