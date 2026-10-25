@@ -4,6 +4,7 @@ import Expense from '../models/expense.model.js';
 import Settings from '../models/settings.model.js';
 import Payment from '../models/payment.model.js';
 import WeeklyMealPlan from '../models/weeklyMealPlan.model.js';
+import MonthlyBalance from '../models/monthlyBalance.model.js';
 import { sendSuccess, parsePagination, buildPagination } from '../utils/apiResponse.js';
 import { notFoundError } from '../utils/AppError.js';
 
@@ -54,15 +55,144 @@ export const getMonthlySummary = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// ─── Timezone helpers (Asia/Dhaka, UTC+6) ────────────────────────────────────
+const DHAKA_OFFSET_MS = 6 * 60 * 60 * 1000; // UTC+6
+
+/**
+ * Returns the current { month, year } in Asia/Dhaka timezone.
+ */
+function dhakaMonthYear() {
+  const dhaka = new Date(Date.now() + DHAKA_OFFSET_MS);
+  return { month: dhaka.getUTCMonth() + 1, year: dhaka.getUTCFullYear() };
+}
+
+/**
+ * Given a { month, year }, returns the previous { month, year }.
+ * Handles December → January correctly.
+ */
+function prevMonthYear(month, year) {
+  if (month === 1) return { month: 12, year: year - 1 };
+  return { month: month - 1, year };
+}
+
+/**
+ * Computes per-member afterMeal for a given (month, year) WITHOUT applying
+ * any carry-forward from a prior period.  Used internally when we need to
+ * calculate what the previous month's closing balance was.
+ *
+ * Returns a Map<memberId_string, afterMeal_number>.
+ */
+async function computeRawAfterMealMap(month, year) {
+  const [mealAgg, expenseAgg, paymentAgg, allMembers] = await Promise.all([
+    MealEntry.aggregate([
+      { $match: { month, year } },
+      {
+        $group: {
+          _id: '$memberId',
+          totalMeals: { $sum: '$mealCount' },
+        },
+      },
+    ]),
+    Expense.aggregate([
+      { $match: { month, year } },
+      {
+        $group: {
+          _id: null,
+          groceryTotal: {
+            $sum: { $cond: [{ $eq: ['$expenseType', 'Grocery'] }, '$amount', 0] },
+          },
+          commonTotal: {
+            $sum: { $cond: [{ $eq: ['$expenseType', 'Common'] }, '$amount', 0] },
+          },
+        },
+      },
+    ]),
+    Payment.aggregate([
+      {
+        $match: {
+          paidAt: {
+            $gte: new Date(year, month - 1, 1),
+            $lt:  new Date(year, month, 1),
+          },
+        },
+      },
+      { $group: { _id: '$memberId', totalPaid: { $sum: '$amount' } } },
+    ]),
+    Member.find({ status: 'active' }).select('_id'),
+  ]);
+
+  const groceryTotal  = expenseAgg[0]?.groceryTotal || 0;
+  const commonTotal   = expenseAgg[0]?.commonTotal  || 0;
+  const totalMeals    = mealAgg.reduce((s, m) => s + m.totalMeals, 0);
+  const settings      = await Settings.findOne();
+  const fallbackRate  = settings?.mealRate || 0;
+  const mealRate      = totalMeals > 0 ? roundTwo(groceryTotal / totalMeals) : fallbackRate;
+  const commonPerMem  = allMembers.length > 0 ? roundTwo(commonTotal / allMembers.length) : 0;
+
+  const mealMap    = Object.fromEntries(mealAgg.map(m   => [m._id.toString(), m.totalMeals]));
+  const paymentMap = Object.fromEntries(paymentAgg.map(p => [p._id.toString(), p.totalPaid]));
+
+  const result = new Map();
+  for (const member of allMembers) {
+    const mid       = member._id.toString();
+    const meals     = mealMap[mid]    || 0;
+    const paid      = paymentMap[mid] || 0;
+    const mealCost  = roundTwo(meals * mealRate);
+    const totalCost = roundTwo(mealCost + commonPerMem);
+    result.set(mid, roundTwo(paid - totalCost));
+  }
+  return result;
+}
+
+/**
+ * Idempotently ensures that MonthlyBalance records exist for every active
+ * member for (targetMonth, targetYear), carrying forward each member's
+ * closing balance from (sourceMonth, sourceYear).
+ *
+ * Uses `$setOnInsert` so that if the document already exists it is NEVER
+ * overwritten — preventing double-application on repeated API calls.
+ */
+async function ensureCarryForward(targetMonth, targetYear, sourceMonth, sourceYear) {
+  // Compute the previous month's closing afterMeal for each active member
+  const prevAfterMealMap = await computeRawAfterMealMap(sourceMonth, sourceYear);
+
+  // Build bulk upsert operations — one per member
+  const bulkOps = [];
+  for (const [memberId, previousBalance] of prevAfterMealMap.entries()) {
+    bulkOps.push({
+      updateOne: {
+        filter: { memberId, month: targetMonth, year: targetYear },
+        update: {
+          $setOnInsert: {
+            memberId,
+            month:           targetMonth,
+            year:            targetYear,
+            previousBalance: roundTwo(previousBalance),
+            sourceMonth,
+            sourceYear,
+          },
+        },
+        upsert: true,
+      },
+    });
+  }
+
+  if (bulkOps.length > 0) {
+    await MonthlyBalance.bulkWrite(bulkOps, { ordered: false });
+  }
+}
+
 /**
  * GET /api/meals/monthly-detail?month=7&year=2026
- * Returns:
- *  - per-member meal totals (lunch, dinner, total)
- *  - total grocery/meal expenses for the month
- *  - computed meal rate = total grocery expense / total meals
- *  - per-member meal cost = their meals × meal rate
- *  - per-member balance from bills (paidAmount - totalAmount)
- *  - per-member balance remaining after meal deduction
+ *
+ * Returns per-member meal totals, expenses, meal rate, and — crucially —
+ * each member's effective Paid amount, which already includes the
+ * carry-forward of the previous month's After Deduction balance.
+ *
+ * The carry-forward is stored idempotently in MonthlyBalance so that
+ * page refreshes and repeated API calls never double-apply the adjustment.
+ *
+ * Month boundaries are evaluated in the Asia/Dhaka timezone (UTC+6).
  */
 export const getMonthlyDetail = async (req, res, next) => {
   try {
@@ -70,7 +200,18 @@ export const getMonthlyDetail = async (req, res, next) => {
     const month = req.query.month ? Number(req.query.month) : now.getMonth() + 1;
     const year  = req.query.year  ? Number(req.query.year)  : now.getFullYear();
 
-    // 1. Per-member meal aggregation
+    // ── Step 1: Idempotently snapshot the previous month's closing balances
+    //           into MonthlyBalance for this (month, year) ──────────────────
+    const { month: prevMonth, year: prevYear } = prevMonthYear(month, year);
+    await ensureCarryForward(month, year, prevMonth, prevYear);
+
+    // ── Step 2: Load the stored carry-forward balances for this month ────────
+    const balanceDocs = await MonthlyBalance.find({ month, year });
+    const carryMap = new Map(
+      balanceDocs.map(b => [b.memberId.toString(), b.previousBalance])
+    );
+
+    // ── Step 3: Per-member meal aggregation ──────────────────────────────────
     const mealAgg = await MealEntry.aggregate([
       { $match: { month, year } },
       {
@@ -83,7 +224,7 @@ export const getMonthlyDetail = async (req, res, next) => {
       },
     ]);
 
-    // 2. Total grocery and common expenses this month
+    // ── Step 4: Total grocery and common expenses this month ─────────────────
     const expenseAgg = await Expense.aggregate([
       { $match: { month, year } },
       {
@@ -103,52 +244,71 @@ export const getMonthlyDetail = async (req, res, next) => {
         },
       },
     ]);
-    const totalExpense  = expenseAgg[0]?.totalExpense  || 0;
-    const groceryTotal  = expenseAgg[0]?.groceryTotal  || 0;
-    const commonTotal   = expenseAgg[0]?.commonTotal   || 0;
+    const totalExpense = expenseAgg[0]?.totalExpense || 0;
+    const groceryTotal = expenseAgg[0]?.groceryTotal || 0;
+    const commonTotal  = expenseAgg[0]?.commonTotal  || 0;
 
-    // 3. Total meals across all members
+    // ── Step 5: Total meals across all members ───────────────────────────────
     const totalMeals = mealAgg.reduce((s, m) => s + m.totalMeals, 0);
 
-    // 4. Meal rate: grocery-only expenses ÷ total meals
-    const settings = await Settings.findOne();
+    // ── Step 6: Meal rate ────────────────────────────────────────────────────
+    const settings    = await Settings.findOne();
     const fallbackRate = settings?.mealRate || 0;
-    const mealRate = totalMeals > 0 ? groceryTotal / totalMeals : fallbackRate;
+    const mealRate     = totalMeals > 0 ? groceryTotal / totalMeals : fallbackRate;
 
-    // 4b. Common cost per member (split equally among active members)
-    const activeMembersCount = await Member.countDocuments({ status: 'active' });
-    const commonCostPerMember = activeMembersCount > 0 ? roundTwo(commonTotal / activeMembersCount) : 0;
+    // ── Step 7: Common cost per active member ────────────────────────────────
+    const activeMembersCount  = await Member.countDocuments({ status: 'active' });
+    const commonCostPerMember = activeMembersCount > 0
+      ? roundTwo(commonTotal / activeMembersCount)
+      : 0;
 
-    // 5. Aggregate total paid per member from Payment records for this month
+    // ── Step 8: Actual payments made this month (raw cash/bkash/etc.) ────────
     const monthStart = new Date(year, month - 1, 1);
-    const monthEnd   = new Date(year, month, 1); // exclusive upper bound
+    const monthEnd   = new Date(year, month,     1); // exclusive
     const paymentAgg = await Payment.aggregate([
       { $match: { paidAt: { $gte: monthStart, $lt: monthEnd } } },
       { $group: { _id: '$memberId', totalPaid: { $sum: '$amount' } } },
     ]);
 
-    // 6. All active members
-    const allMembers = await Member.find({ status: 'active' }).populate('userId', 'displayName email photoURL');
+    // ── Step 9: All active members ───────────────────────────────────────────
+    const allMembers = await Member.find({ status: 'active' })
+      .populate('userId', 'displayName email photoURL');
 
-    // 7. Build per-member summary
+    // ── Step 10: Build per-member response ───────────────────────────────────
     const mealMap = {};
     mealAgg.forEach(m => { mealMap[m._id.toString()] = m; });
 
     const paymentMap = {};
     paymentAgg.forEach(p => { paymentMap[p._id.toString()] = p.totalPaid; });
 
-    // Round rates first so that member calculations perfectly match the displayed rate
-    const roundedMealRate = roundTwo(mealRate);
+    const roundedMealRate   = roundTwo(mealRate);
     const roundedCommonRate = roundTwo(commonCostPerMember);
 
     const members = allMembers.map((member) => {
-      const mid    = member._id.toString();
-      const meals  = mealMap[mid] || { totalLunch: 0, totalDinner: 0, totalMeals: 0 };
+      const mid     = member._id.toString();
+      const meals   = mealMap[mid] || { totalLunch: 0, totalDinner: 0, totalMeals: 0 };
+
+      // Costs for this month
       const mealCost    = roundTwo(meals.totalMeals * roundedMealRate);
       const commonCost  = roundedCommonRate;
       const totalCost   = roundTwo(mealCost + commonCost);
-      const paidAmount  = paymentMap[mid] || 0;
-      const afterMeal   = roundTwo(paidAmount - totalCost);
+
+      // Actual new payments received this month
+      const newPayments = paymentMap[mid] || 0;
+
+      // Previous month's carry-forward balance:
+      //   positive → member had credit last month (e.g. overpaid)
+      //   negative → member had a debt last month (e.g. underpaid)
+      const previousBalance = carryMap.get(mid) ?? 0;
+
+      // Effective paid = new payments + previous carry-forward
+      // (previousBalance is ADDED, so:
+      //   negative carry → reduces effective paid, member still owes
+      //   positive carry → increases effective paid, member has extra credit)
+      const paidAmount = roundTwo(newPayments + previousBalance);
+
+      // After Deduction = effective paid − this month's total cost
+      const afterMeal = roundTwo(paidAmount - totalCost);
 
       return {
         memberId: mid,
@@ -162,8 +322,9 @@ export const getMonthlyDetail = async (req, res, next) => {
         mealCost,
         commonCostPerMember: commonCost,
         totalCost,
-        paidAmount,
-        afterMeal,
+        paidAmount,   // effective paid (new payments + carry-forward)
+        afterMeal,    // balance after this month's costs
+        previousBalance, // informational: carry-forward applied
       };
     });
 
