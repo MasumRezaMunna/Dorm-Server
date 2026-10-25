@@ -7,6 +7,8 @@ import Complaint from '../models/complaint.model.js';
 import Notice from '../models/notice.model.js';
 import MealEntry from '../models/mealEntry.model.js';
 import Notification from '../models/notification.model.js';
+import MonthlyBalance from '../models/monthlyBalance.model.js';
+import { ensureCarryForward, prevMonthYear } from './meal.controller.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 import { notFoundError } from '../utils/AppError.js';
 import { 
@@ -14,7 +16,8 @@ import {
   calculateTotalCommonCost, 
   calculateTotalExpense, 
   calculateMealRate, 
-  calculateCommonCostPerMember 
+  calculateCommonCostPerMember,
+  roundTwo
 } from '../utils/calculations.js';
 
 export const getManagerDashboard = async (req, res, next) => {
@@ -23,27 +26,39 @@ export const getManagerDashboard = async (req, res, next) => {
     const month = req.query.month ? Number(req.query.month) : now.getMonth() + 1;
     const year = req.query.year ? Number(req.query.year) : now.getFullYear();
 
+    // Ensure carry-forward snapshot is created idempotently for this month
+    const { month: prevMonth, year: prevYear } = prevMonthYear(month, year);
+    await ensureCarryForward(month, year, prevMonth, prevYear);
+
     const [
       totalMembers,
-      activeMembers,
+      activeMembersList,
       totalRooms,
       occupiedRooms,
       recentComplaints,
       recentNotices,
-      monthlyIncome,
+      paymentAgg,
       expenses,
       recentNotifications,
       totalMealsAgg,
+      balanceDocs,
     ] = await Promise.all([
       Member.countDocuments(),
-      Member.countDocuments({ status: 'active' }),
+      Member.find({ status: 'active' }).select('_id'),
       Room.countDocuments(),
       Room.countDocuments({ status: 'occupied' }),
       Complaint.find({ status: 'open' }).sort({ createdAt: -1 }).limit(5).populate({ path: 'memberId', populate: { path: 'userId', select: 'displayName' } }),
       Notice.find({ isPublished: true }).sort({ createdAt: -1 }).limit(3),
       Payment.aggregate([
-        { $match: { paidAt: { $gte: new Date(year, month - 1, 1), $lt: new Date(year, month, 1) } } },
-        { $group: { _id: null, total: { $sum: '$amount' } } },
+        {
+          $match: {
+            paidAt: {
+              $gte: new Date(year, month - 1, 1),
+              $lt:  new Date(year, month, 1),
+            },
+          },
+        },
+        { $group: { _id: '$memberId', total: { $sum: '$amount' } } },
       ]),
       Expense.find({ month, year }),
       Notification.find({ userId: req.user._id }).sort({ createdAt: -1 }).limit(5),
@@ -51,7 +66,28 @@ export const getManagerDashboard = async (req, res, next) => {
         { $match: { month, year } },
         { $group: { _id: null, total: { $sum: '$mealCount' } } }
       ]),
+      MonthlyBalance.find({ month, year }),
     ]);
+
+    const activeMembers = activeMembersList.length;
+    const paymentMap = {};
+    paymentAgg.forEach(p => { paymentMap[p._id.toString()] = p.total; });
+
+    const carryMap = new Map(balanceDocs.map(b => [b.memberId.toString(), b.previousBalance]));
+
+    // Total effective paid across all active members (raw payments + carry-forward)
+    const totalEffectivePaid = roundTwo(
+      activeMembersList.reduce((sum, member) => {
+        const mid = member._id.toString();
+        const newPayments = paymentMap[mid] || 0;
+        const prevBal = carryMap.get(mid) ?? 0;
+        return sum + roundTwo(newPayments + prevBal);
+      }, 0)
+    );
+
+    const rawPaymentsTotal = roundTwo(
+      paymentAgg.reduce((sum, p) => sum + (p.total || 0), 0)
+    );
 
     const groceryCost = calculateTotalGroceryCost(expenses);
     const commonCost = calculateTotalCommonCost(expenses);
@@ -66,9 +102,10 @@ export const getManagerDashboard = async (req, res, next) => {
       totalRooms,
       occupiedRooms,
       availableRooms: totalRooms - occupiedRooms,
-      monthlyIncome: monthlyIncome[0]?.total || 0,
+      monthlyIncome: totalEffectivePaid,
+      rawMonthlyIncome: rawPaymentsTotal,
       monthlyExpenses: totalExpenses,
-      netBalance: (monthlyIncome[0]?.total || 0) - totalExpenses,
+      netBalance: roundTwo(totalEffectivePaid - totalExpenses),
       groceryCost,
       commonCost,
       totalMeals,
@@ -89,7 +126,21 @@ export const getMemberDashboard = async (req, res, next) => {
     const month = req.query.month ? Number(req.query.month) : now.getMonth() + 1;
     const year = req.query.year ? Number(req.query.year) : now.getFullYear();
 
-    const [notices, mealStats, recentNotifications, monthlyIncomeAgg, expenses, activeMembersCount, totalMealsAgg, memberPaymentsAgg] = await Promise.all([
+    const { month: prevMonth, year: prevYear } = prevMonthYear(month, year);
+    await ensureCarryForward(month, year, prevMonth, prevYear);
+
+    const [
+      notices,
+      mealStats,
+      recentNotifications,
+      monthlyIncomeAgg,
+      expenses,
+      activeMembersList,
+      totalMealsAgg,
+      memberPaymentsAgg,
+      balanceDocs,
+      myBalanceDoc,
+    ] = await Promise.all([
       Notice.find({ isPublished: true }).sort({ isPinned: -1, createdAt: -1 }).limit(5),
       MealEntry.aggregate([
         { $match: { memberId: member._id, month, year } },
@@ -98,10 +149,10 @@ export const getMemberDashboard = async (req, res, next) => {
       Notification.find({ userId: req.user._id }).sort({ createdAt: -1 }).limit(5),
       Payment.aggregate([
         { $match: { paidAt: { $gte: new Date(year, month - 1, 1), $lt: new Date(year, month, 1) } } },
-        { $group: { _id: null, total: { $sum: '$amount' } } },
+        { $group: { _id: '$memberId', totalPaid: { $sum: '$amount' } } },
       ]),
       Expense.find({ month, year }),
-      Member.countDocuments({ status: 'active' }),
+      Member.find({ status: 'active' }).select('_id'),
       MealEntry.aggregate([
         { $match: { month, year } },
         { $group: { _id: null, total: { $sum: '$mealCount' } } }
@@ -109,22 +160,40 @@ export const getMemberDashboard = async (req, res, next) => {
       Payment.aggregate([
         { $match: { memberId: member._id, paidAt: { $gte: new Date(year, month - 1, 1), $lt: new Date(year, month, 1) } } },
         { $group: { _id: null, total: { $sum: '$amount' } } },
-      ])
+      ]),
+      MonthlyBalance.find({ month, year }),
+      MonthlyBalance.findOne({ memberId: member._id, month, year }),
     ]);
 
+    const activeMembersCount = activeMembersList.length;
+    const carryMap = new Map(balanceDocs.map(b => [b.memberId.toString(), b.previousBalance]));
+    const paymentMap = {};
+    monthlyIncomeAgg.forEach(p => { paymentMap[p._id.toString()] = p.totalPaid; });
+
+    const totalEffectiveIncome = roundTwo(
+      activeMembersList.reduce((sum, m) => {
+        const mid = m._id.toString();
+        return sum + roundTwo((paymentMap[mid] || 0) + (carryMap.get(mid) ?? 0));
+      }, 0)
+    );
+
+    const memberRawPaid = memberPaymentsAgg[0]?.total || 0;
+    const memberCarry = myBalanceDoc?.previousBalance ?? 0;
+    const memberPaidThisMonth = roundTwo(memberRawPaid + memberCarry);
+
     const mealThisMonth = mealStats[0]?.total || 0;
-    const dormIncome    = monthlyIncomeAgg[0]?.total   || 0;
-    const memberPaidThisMonth = memberPaymentsAgg[0]?.total || 0;
+    const dormIncome    = totalEffectiveIncome;
     
     const groceryCost = calculateTotalGroceryCost(expenses);
     const commonCost = calculateTotalCommonCost(expenses);
     const dormExpenses = calculateTotalExpense(groceryCost, commonCost);
     
-    const dormRemaining = dormIncome - dormExpenses;
+    const dormRemaining = roundTwo(dormIncome - dormExpenses);
     
     const totalMeals = totalMealsAgg[0]?.total || 0;
     const mealRate = calculateMealRate(groceryCost, totalMeals);
     const commonCostPerMember = calculateCommonCostPerMember(commonCost, activeMembersCount);
+
     sendSuccess(res, { 
       member, 
       room: member.roomId, 
@@ -139,7 +208,8 @@ export const getMemberDashboard = async (req, res, next) => {
       totalMeals,
       mealRate,
       commonCostPerMember,
-      memberPaidThisMonth
+      memberPaidThisMonth,
+      previousBalance: memberCarry,
     }, 'Member dashboard data retrieved');
   } catch (err) { next(err); }
 };
@@ -150,34 +220,43 @@ export const getCommunityStats = async (req, res, next) => {
     const month = req.query.month ? Number(req.query.month) : now.getMonth() + 1;
     const year = req.query.year ? Number(req.query.year) : now.getFullYear();
 
+    const { month: prevMonth, year: prevYear } = prevMonthYear(month, year);
+    await ensureCarryForward(month, year, prevMonth, prevYear);
+
     // Get all active members populated with user info and room info
-    const members = await Member.find({ status: 'active' }).populate('userId', 'displayName photoURL email').populate('roomId', 'roomNumber');
-
-    // Get meal stats for the month
-    const mealStats = await MealEntry.aggregate([
-      { $match: { month, year } },
-      { $group: { _id: '$memberId', totalMeals: { $sum: '$mealCount' } } }
-    ]);
-
-    // Get payment stats for the month (total paid by member this month)
-    const paymentStats = await Payment.aggregate([
-      { $match: { paidAt: { $gte: new Date(year, month - 1, 1), $lt: new Date(year, month, 1) } } },
-      { $group: { _id: '$memberId', totalPaid: { $sum: '$amount' } } }
+    const [members, mealStats, paymentStats, balanceDocs] = await Promise.all([
+      Member.find({ status: 'active' }).populate('userId', 'displayName photoURL email').populate('roomId', 'roomNumber'),
+      MealEntry.aggregate([
+        { $match: { month, year } },
+        { $group: { _id: '$memberId', totalMeals: { $sum: '$mealCount' } } }
+      ]),
+      Payment.aggregate([
+        { $match: { paidAt: { $gte: new Date(year, month - 1, 1), $lt: new Date(year, month, 1) } } },
+        { $group: { _id: '$memberId', totalPaid: { $sum: '$amount' } } }
+      ]),
+      MonthlyBalance.find({ month, year }),
     ]);
 
     // Map aggregates for quick lookup
     const mealMap = mealStats.reduce((acc, stat) => ({ ...acc, [stat._id.toString()]: stat.totalMeals }), {});
     const paymentMap = paymentStats.reduce((acc, stat) => ({ ...acc, [stat._id.toString()]: stat.totalPaid }), {});
+    const carryMap = new Map(balanceDocs.map(b => [b.memberId.toString(), b.previousBalance]));
 
     // Construct community stats
-    const communityData = members.map(m => ({
-      memberId: m.memberId,
-      name: m.userId?.displayName || 'Unknown',
-      photoURL: m.userId?.photoURL || null,
-      room: m.roomId, // Or could populate Room
-      totalMeals: mealMap[m._id.toString()] || 0,
-      totalPaid: paymentMap[m._id.toString()] || 0,
-    }));
+    const communityData = members.map(m => {
+      const mid = m._id.toString();
+      const rawPaid = paymentMap[mid] || 0;
+      const carry = carryMap.get(mid) ?? 0;
+      return {
+        memberId: m.memberId,
+        name: m.userId?.displayName || 'Unknown',
+        photoURL: m.userId?.photoURL || null,
+        room: m.roomId,
+        totalMeals: mealMap[mid] || 0,
+        totalPaid: roundTwo(rawPaid + carry),
+        previousBalance: carry,
+      };
+    });
 
     // Sort by name
     communityData.sort((a, b) => a.name.localeCompare(b.name));

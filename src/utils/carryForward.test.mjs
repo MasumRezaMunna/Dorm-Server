@@ -191,9 +191,45 @@ test("old formula (no storedCarry) drops A's balance when computing B\u2192C sna
   assert.notEqual(closeBBuggy, closeBFixed, 'Old and new must differ when carry != 0');
 });
 
+// ── 9. Dashboard Net Balance vs Member Breakdown Table Totals ─────────────────
+console.log('\n9. Dashboard net balance vs member breakdown table totals');
+
+test('Dashboard net balance matches breakdown table total after deduction', () => {
+  // Members in October 2026:
+  const members = [
+    { name: 'Nirob',  rawPayment: 0,       carry: 6.00,    totalCost: 3.33 },
+    { name: 'Munna',  rawPayment: 1000.00, carry: -272.10, totalCost: 1002.69 },
+    { name: 'Rafat',  rawPayment: 700.00,  carry: -56.05,  totalCost: 711.21 },
+    { name: 'Sabit',  rawPayment: 800.00,  carry: 340.55,  totalCost: 836.13 },
+    { name: 'Mahbub', rawPayment: 0,       carry: 6.00,    totalCost: 3.33 },
+    { name: 'Shuvo',  rawPayment: 705.20,  carry: 178.00,  totalCost: 836.13 },
+  ];
+
+  const totalRawPayments = roundTwo(members.reduce((s, m) => s + m.rawPayment, 0));
+  const totalCarry       = roundTwo(members.reduce((s, m) => s + m.carry, 0));
+  const totalExpenses    = 3393.00;
+
+  // Breakdown table calculates:
+  const tableEffectivePaid = roundTwo(members.reduce((s, m) => s + roundTwo(m.rawPayment + m.carry), 0));
+  const tableAfterDeduction = roundTwo(tableEffectivePaid - totalExpenses);
+
+  // Buggy dashboard calculated (raw payments only):
+  const buggyDashboardNet = roundTwo(totalRawPayments - totalExpenses);
+
+  // Fixed dashboard calculates (effective paid including carry):
+  const fixedDashboardNet = roundTwo(tableEffectivePaid - totalExpenses);
+
+  assert.equal(totalRawPayments, 3205.20, 'Raw payments total is 3205.20');
+  assert.equal(tableEffectivePaid, 3407.60, 'Table effective paid is 3407.60');
+  assert.equal(buggyDashboardNet, -187.80, 'Buggy dashboard showed -187.80');
+  assert.equal(fixedDashboardNet, 14.60, 'Fixed dashboard shows +14.60');
+  assert.equal(fixedDashboardNet, tableAfterDeduction, 'Dashboard net balance matches table after deduction exactly');
+});
+
 // ─── Summary ──────────────────────────────────────────────────────────────────
 console.log(`\n${'─'.repeat(50)}`);
 console.log(`Results: ${passed} passed, ${failed} failed`);
 if (failed > 0) {
   process.exit(1);
 }
+

@@ -70,7 +70,7 @@ function dhakaMonthYear() {
  * Given a { month, year }, returns the previous { month, year }.
  * Handles December → January correctly.
  */
-function prevMonthYear(month, year) {
+export function prevMonthYear(month, year) {
   if (month === 1) return { month: 12, year: year - 1 };
   return { month: month - 1, year };
 }
@@ -166,7 +166,7 @@ async function computeRawAfterMealMap(month, year, storedCarryMap = new Map()) {
  * so that the carry-forward chain remains intact across three or more
  * consecutive months.
  */
-async function ensureCarryForward(targetMonth, targetYear, sourceMonth, sourceYear) {
+export async function ensureCarryForward(targetMonth, targetYear, sourceMonth, sourceYear) {
   // Read the source month's own stored carry-forward balance so that the
   // closing balance snapshot includes any balance carried *into* that month
   // from even earlier periods.  Without this, the chain breaks after month 2.
