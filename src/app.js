@@ -23,6 +23,7 @@ import settingsRoutes from './routes/settings.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 import marketScheduleRoutes from './routes/marketSchedule.routes.js';
 import chatRoutes from './routes/chat.routes.js';
+import publicRoutes from './routes/public.routes.js';
 
 const app = express();
 
@@ -88,6 +89,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/market-schedules', marketScheduleRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/public', publicRoutes);
 
 // ─── Error Handling ──────────────────────────────────────────────────────────
 app.use(notFound);
