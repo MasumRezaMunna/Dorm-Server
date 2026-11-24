@@ -8,7 +8,6 @@ export let redisClient = null;
 
 let isConnected = false;
 let isConnecting = false;
-let hasLoggedFailure = false;
 
 /**
  * Builds the Redis configuration object from environment variables.
@@ -19,30 +18,35 @@ const getClientConfig = () => {
   const host = process.env.REDIS_HOST || 'localhost';
   const port = parseInt(process.env.REDIS_PORT, 10) || 6379;
 
-  // TLS configuration for production Redis Cloud
-  // Defaults to true in production unless explicitly set to 'false' via REDIS_TLS
+  // TLS configuration:
+  // Explicitly controlled by REDIS_TLS ('true' or 'false').
+  // If REDIS_URL is provided with 'rediss://', TLS is enabled.
+  // Note: Do NOT default to true just because NODE_ENV === 'production',
+  // as standard Redis Cloud / cloud instances on custom ports (e.g., 16992) do not use TLS.
   const isTls =
     process.env.REDIS_TLS !== undefined
       ? process.env.REDIS_TLS === 'true'
-      : process.env.NODE_ENV === 'production';
+      : (process.env.REDIS_URL ? process.env.REDIS_URL.startsWith('rediss://') : false);
 
-  // Support direct REDIS_URL if provided and no REDIS_HOST specified
+  const reconnectStrategy = (retries) => {
+    // Stop reconnecting after 3 retries to prevent infinite reconnect loops
+    // and let the application continue smoothly in DB fallback mode
+    if (retries > 3) {
+      logger.warn('⚠️ [CACHE WARNING] Redis reconnect limit reached (3 attempts). Halting reconnects; continuing in pure MongoDB fallback mode.');
+      return new Error('Redis reconnect retries exhausted');
+    }
+    const delay = Math.min(retries * 500, 2000);
+    logger.info(`🔄 Redis reconnect attempt #${retries} in ${delay}ms...`);
+    return delay;
+  };
+
   if (process.env.REDIS_URL && !process.env.REDIS_HOST) {
     return {
       url: process.env.REDIS_URL,
       socket: {
         ...(isTls ? { tls: true } : {}),
-        reconnectStrategy: (retries) => {
-          if (retries > 5) {
-            if (!hasLoggedFailure) {
-              logger.warn('⚠️ [CACHE WARNING] Redis reconnect retries exceeded. Operating in DB fallback mode.');
-              hasLoggedFailure = true;
-            }
-            return 30000;
-          }
-          return Math.min(retries * 500, 3000);
-        },
-        connectTimeout: 8000,
+        reconnectStrategy,
+        connectTimeout: 5000,
       },
     };
   }
@@ -54,17 +58,8 @@ const getClientConfig = () => {
       host,
       port,
       ...(isTls ? { tls: true } : {}),
-      reconnectStrategy: (retries) => {
-        if (retries > 5) {
-          if (!hasLoggedFailure) {
-            logger.warn('⚠️ [CACHE WARNING] Redis reconnect retries exceeded. Operating in DB fallback mode.');
-            hasLoggedFailure = true;
-          }
-          return 30000;
-        }
-        return Math.min(retries * 500, 3000);
-      },
-      connectTimeout: 8000,
+      reconnectStrategy,
+      connectTimeout: 5000,
     },
   };
 };
@@ -74,10 +69,11 @@ const getClientConfig = () => {
  *
  * Requirements:
  * - Uses createClient() from official 'redis' package.
- * - Reads REDIS_USERNAME, REDIS_PASSWORD, REDIS_HOST, REDIS_PORT, REDIS_ENABLED.
+ * - Reads REDIS_USERNAME, REDIS_PASSWORD, REDIS_HOST, REDIS_PORT, REDIS_ENABLED, REDIS_TLS.
  * - Avoids creating multiple concurrent connections.
  * - Handles connection failures gracefully without throwing errors.
  * - If Redis is unavailable, the application continues normally using MongoDB.
+ * - Never blocks HTTP server startup.
  * - No top-level await.
  */
 export const connectRedis = async () => {
@@ -98,27 +94,19 @@ export const connectRedis = async () => {
     redisClient = createClient(config);
 
     // Register event listeners
-    redisClient.on('connect', () => {
-      logger.info('🔌 Redis client connecting...');
-    });
-
     redisClient.on('ready', () => {
       isConnected = true;
       isConnecting = false;
-      hasLoggedFailure = false;
       logger.info('✅ Redis Cloud connected and ready for caching');
     });
 
     redisClient.on('error', (err) => {
       isConnected = false;
-      if (!hasLoggedFailure) {
-        logger.warn(`⚠️ [CACHE ERROR] Redis Client Error: ${err.message}. Operating in DB fallback mode.`);
-        hasLoggedFailure = true;
-      }
+      logger.warn(`⚠️ [CACHE ERROR] Redis Client Error: ${err.message}`);
     });
 
     redisClient.on('reconnecting', () => {
-      logger.info('🔄 Redis reconnecting...');
+      // Reconnect attempt logged inside reconnectStrategy
     });
 
     redisClient.on('end', () => {
@@ -127,16 +115,21 @@ export const connectRedis = async () => {
       logger.info('🛑 Redis connection closed');
     });
 
-    await redisClient.connect();
+    // Enforce strict timeout (4000ms) on initial connection attempt
+    // so connectRedis never blocks or hangs callers
+    const connectPromise = redisClient.connect();
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Redis connection attempt timed out (4000ms)')), 4000)
+    );
+
+    await Promise.race([connectPromise, timeoutPromise]);
+    isConnected = true;
     isConnecting = false;
     return redisClient;
   } catch (err) {
     isConnected = false;
     isConnecting = false;
-    if (!hasLoggedFailure) {
-      logger.warn(`⚠️ [CACHE WARNING] Failed to connect to Redis (${err.message}). Application will function normally using MongoDB.`);
-      hasLoggedFailure = true;
-    }
+    logger.warn(`⚠️ [CACHE WARNING] Could not establish Redis connection: ${err.message}. Backend will operate normally using MongoDB.`);
     return null;
   }
 };
@@ -234,9 +227,13 @@ export const getRedisClient = () => redisClient;
  * Gracefully disconnect from Redis
  */
 export const disconnectRedis = async () => {
-  if (redisClient && redisClient.isOpen) {
+  if (redisClient) {
     try {
-      await redisClient.quit();
+      if (redisClient.isOpen) {
+        await redisClient.quit();
+      } else {
+        await redisClient.disconnect();
+      }
       logger.info('Redis disconnected gracefully');
     } catch (err) {
       logger.warn(`Redis quit error: ${err.message}`);

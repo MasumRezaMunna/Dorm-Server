@@ -14,16 +14,17 @@ const httpServer = createServer(app);
 // Initialize Socket.IO on top of the HTTP server
 initSocket(httpServer);
 
-// Connect to MongoDB and Redis then start server
+// Connect to MongoDB then start HTTP server immediately
 connectDB()
-  .then(async () => {
-    // Attempt Redis connection (fail-safe: will not prevent server from starting if Redis is down)
-    await connectRedis().catch((err) => {
-      logger.warn(`Redis initialization error: ${err.message}`);
+  .then(() => {
+    // Start HTTP server immediately so Render detects the open port without delay
+    httpServer.listen(PORT, '0.0.0.0', () => {
+      logger.info(`🚀 Server running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
     });
 
-    httpServer.listen(PORT, '0.0.0.0', () => {
-      logger.info(`🚀 Server running on port ${PORT} [${process.env.NODE_ENV}]`);
+    // Initialize Redis in the background (fail-safe: will never block server startup or port detection)
+    connectRedis().catch((err) => {
+      logger.warn(`Redis background initialization notice: ${err.message}`);
     });
   })
   .catch((err) => {
