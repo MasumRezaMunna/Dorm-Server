@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
-    "test": "node src/utils/carryForward.test.mjs && node src/utils/redisCaching.test.mjs"
+    "test": "node src/utils/carryForward.test.mjs && node src/utils/redisCaching.test.mjs && node src/utils/cacheVerification.test.mjs"
   },
   "keywords": [
     "dormitory",

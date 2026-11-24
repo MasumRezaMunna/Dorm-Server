@@ -1,4 +1,5 @@
 import { createClient } from 'redis';
+import { cacheMetrics } from '../utils/cacheMetrics.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -97,12 +98,13 @@ export const connectRedis = async () => {
     redisClient.on('ready', () => {
       isConnected = true;
       isConnecting = false;
-      logger.info('✅ Redis Cloud connected and ready for caching');
+      logger.info('✅ [REDIS CONNECTED] Redis Cloud connected and ready for caching');
     });
 
     redisClient.on('error', (err) => {
       isConnected = false;
-      logger.warn(`⚠️ [CACHE ERROR] Redis Client Error: ${err.message}`);
+      cacheMetrics.recordError(err);
+      logger.warn(`[CACHE ERROR] Redis Client: ${err.message}`);
     });
 
     redisClient.on('reconnecting', () => {
@@ -129,7 +131,8 @@ export const connectRedis = async () => {
   } catch (err) {
     isConnected = false;
     isConnecting = false;
-    logger.warn(`⚠️ [CACHE WARNING] Could not establish Redis connection: ${err.message}. Backend will operate normally using MongoDB.`);
+    cacheMetrics.recordError(err);
+    logger.warn(`[CACHE ERROR] Redis Connection: ${err.message}. Backend will operate normally using MongoDB.`);
     return null;
   }
 };
@@ -151,7 +154,8 @@ export const safeGet = async (key) => {
     const data = await redisClient.get(key);
     return data ? JSON.parse(data) : null;
   } catch (err) {
-    logger.warn(`⚠️ [CACHE GET ERROR] Key "${key}": ${err.message}`);
+    cacheMetrics.recordError(err);
+    logger.warn(`[CACHE ERROR] Get key "${key}": ${err.message}`);
     return null;
   }
 };
@@ -170,7 +174,8 @@ export const safeSet = async (key, value, ttlSeconds = 60) => {
     }
     return true;
   } catch (err) {
-    logger.warn(`⚠️ [CACHE SET ERROR] Key "${key}": ${err.message}`);
+    cacheMetrics.recordError(err);
+    logger.warn(`[CACHE ERROR] Set key "${key}": ${err.message}`);
     return false;
   }
 };
@@ -185,35 +190,34 @@ export const safeDel = async (...keys) => {
     if (flatKeys.length === 0) return 0;
     return await redisClient.del(flatKeys);
   } catch (err) {
-    logger.warn(`⚠️ [CACHE DEL ERROR] Keys [${keys.join(', ')}]: ${err.message}`);
+    cacheMetrics.recordError(err);
+    logger.warn(`[CACHE ERROR] Del keys [${keys.join(', ')}]: ${err.message}`);
     return 0;
   }
 };
 
 /**
- * Delete keys matching a pattern using non-blocking SCAN
+ * Delete keys matching a pattern using non-blocking scanIterator
  */
 export const deleteByPattern = async (pattern) => {
   if (!isRedisAvailable() || !pattern) return 0;
   try {
-    let cursor = 0;
-    let deletedCount = 0;
-    do {
-      const reply = await redisClient.scan(cursor, {
-        MATCH: pattern,
-        COUNT: 100,
-      });
-      cursor = reply.cursor;
-      const keys = reply.keys;
-      if (keys && keys.length > 0) {
-        const count = await redisClient.del(keys);
-        deletedCount += count;
+    const keysToDelete = [];
+    for await (const key of redisClient.scanIterator({ MATCH: pattern, COUNT: 100 })) {
+      if (Array.isArray(key)) {
+        keysToDelete.push(...key);
+      } else if (key) {
+        keysToDelete.push(key);
       }
-    } while (cursor !== 0);
+    }
 
-    return deletedCount;
+    if (keysToDelete.length > 0) {
+      return await redisClient.del(keysToDelete);
+    }
+    return 0;
   } catch (err) {
-    logger.warn(`⚠️ [CACHE SCAN ERROR] Pattern "${pattern}": ${err.message}`);
+    cacheMetrics.recordError(err);
+    logger.warn(`[CACHE ERROR] Scan pattern "${pattern}": ${err.message}`);
     return 0;
   }
 };

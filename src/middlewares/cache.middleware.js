@@ -1,5 +1,6 @@
 import { safeGet, safeSet, isRedisAvailable } from '../config/redis.js';
 import { hashQuery, CACHE_PREFIX } from '../utils/cacheKeys.js';
+import { cacheMetrics } from '../utils/cacheMetrics.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -65,14 +66,16 @@ export const cacheMiddleware = (options = {}) => {
       const cached = await safeGet(cacheKey);
 
       if (cached !== null && cached !== undefined) {
+        cacheMetrics.recordHit(cacheKey);
         res.setHeader('X-Cache', 'HIT');
-        logger.info(`⚡ [CACHE HIT] ${cacheKey}`);
+        logger.info(`[CACHE HIT] ${cacheKey}`);
         return res.json(cached);
       }
 
       // ── Cache Miss ──────────────────────────────────────────────
+      cacheMetrics.recordMiss(cacheKey);
       res.setHeader('X-Cache', 'MISS');
-      logger.info(`🔍 [CACHE MISS] ${cacheKey}`);
+      logger.info(`[CACHE MISS] ${cacheKey}`);
 
       // Intercept res.json to store the response in Redis
       const originalJson = res.json.bind(res);
@@ -87,11 +90,13 @@ export const cacheMiddleware = (options = {}) => {
           safeSet(cacheKey, body, ttl)
             .then((saved) => {
               if (saved) {
-                logger.info(`💾 [CACHE SET] ${cacheKey} (TTL: ${ttl}s)`);
+                cacheMetrics.recordSet(cacheKey);
+                logger.info(`[CACHE SET] ${cacheKey} (TTL: ${ttl}s)`);
               }
             })
             .catch((err) => {
-              logger.warn(`⚠️ [CACHE SET ERROR] ${cacheKey}: ${err.message}`);
+              cacheMetrics.recordError(err);
+              logger.warn(`[CACHE ERROR] ${cacheKey}: ${err.message}`);
             });
         }
 
@@ -100,7 +105,8 @@ export const cacheMiddleware = (options = {}) => {
 
       next();
     } catch (err) {
-      logger.warn(`⚠️ [CACHE MIDDLEWARE ERROR] ${err.message}. Proceeding without cache.`);
+      cacheMetrics.recordError(err);
+      logger.warn(`[CACHE ERROR] Middleware: ${err.message}. Proceeding without cache.`);
       next();
     }
   };

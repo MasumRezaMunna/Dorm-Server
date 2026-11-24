@@ -1,12 +1,14 @@
 import { deleteByPattern, safeDel, isRedisAvailable } from '../config/redis.js';
 import { CACHE_PREFIX } from './cacheKeys.js';
+import { cacheMetrics } from './cacheMetrics.js';
 import logger from './logger.js';
 
 /**
  * Log helper for cache invalidations
  */
 const logInvalidation = (scope, detail = '') => {
-  logger.info(`🧹 [CACHE INVALIDATED] ${scope} ${detail ? `(${detail})` : ''}`.trim());
+  cacheMetrics.recordInvalidation(scope);
+  logger.info(`[CACHE INVALIDATED] ${scope}${detail ? ` (${detail})` : ''}`);
 };
 
 /**
