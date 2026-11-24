@@ -2,6 +2,7 @@ import Member from '../models/member.model.js';
 import User from '../models/user.model.js';
 import { sendSuccess, parsePagination, buildPagination } from '../utils/apiResponse.js';
 import { notFoundError, conflictError } from '../utils/AppError.js';
+import { cacheInvalidator } from '../utils/cacheInvalidator.js';
 
 // Generate next member ID (e.g., MEM-001)
 const generateMemberId = async () => {
@@ -49,6 +50,10 @@ export const createMember = async (req, res, next) => {
     if (existing) return next(conflictError('A member profile already exists for this user'));
     const memberId = await generateMemberId();
     const member = await Member.create({ ...req.body, memberId });
+
+    // Invalidate member and financial caches (active member count affects common costs)
+    await cacheInvalidator.invalidateMembers({ memberId: member._id, userId: member.userId });
+
     sendSuccess(res, member, 'Member created', 201);
   } catch (err) { next(err); }
 };
@@ -57,6 +62,10 @@ export const updateMember = async (req, res, next) => {
   try {
     const member = await Member.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
     if (!member) return next(notFoundError('Member'));
+
+    // Invalidate member and financial caches
+    await cacheInvalidator.invalidateMembers({ memberId: member._id, userId: member.userId });
+
     sendSuccess(res, member, 'Member updated');
   } catch (err) { next(err); }
 };
@@ -65,6 +74,10 @@ export const deleteMember = async (req, res, next) => {
   try {
     const member = await Member.findByIdAndDelete(req.params.id);
     if (!member) return next(notFoundError('Member'));
+
+    // Invalidate member and financial caches
+    await cacheInvalidator.invalidateMembers({ memberId: req.params.id, userId: member.userId });
+
     sendSuccess(res, null, 'Member deleted');
   } catch (err) { next(err); }
 };
@@ -107,6 +120,9 @@ export const updateMyProfile = async (req, res, next) => {
     if (req.body.displayName) {
       await User.findByIdAndUpdate(req.user._id, { displayName: req.body.displayName });
     }
+
+    // Invalidate member profile caches
+    await cacheInvalidator.invalidateMembers({ userId: req.user._id });
 
     sendSuccess(res, member, 'Profile updated successfully');
   } catch (err) { next(err); }

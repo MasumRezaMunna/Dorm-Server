@@ -2,6 +2,7 @@ import Expense from '../models/expense.model.js';
 import { sendSuccess, parsePagination, buildPagination } from '../utils/apiResponse.js';
 import { notFoundError } from '../utils/AppError.js';
 import { calculateTotalGroceryCost, calculateTotalCommonCost } from '../utils/calculations.js';
+import { cacheInvalidator } from '../utils/cacheInvalidator.js';
 
 export const getExpenses = async (req, res, next) => {
   try {
@@ -64,6 +65,10 @@ export const createExpense = async (req, res, next) => {
     const year = parseInt(y, 10);
     const date = new Date(rawDate);
     const expense = await Expense.create({ ...req.body, date, month, year, createdBy: req.user._id });
+
+    // Invalidate expense & financial caches
+    await cacheInvalidator.invalidateExpenses();
+
     sendSuccess(res, expense, 'Expense added', 201);
   } catch (err) { next(err); }
 };
@@ -72,6 +77,10 @@ export const updateExpense = async (req, res, next) => {
   try {
     const expense = await Expense.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!expense) return next(notFoundError('Expense'));
+
+    // Invalidate expense & financial caches
+    await cacheInvalidator.invalidateExpenses();
+
     sendSuccess(res, expense, 'Expense updated');
   } catch (err) { next(err); }
 };
@@ -80,6 +89,10 @@ export const deleteExpense = async (req, res, next) => {
   try {
     const expense = await Expense.findByIdAndDelete(req.params.id);
     if (!expense) return next(notFoundError('Expense'));
+
+    // Invalidate expense & financial caches
+    await cacheInvalidator.invalidateExpenses();
+
     sendSuccess(res, null, 'Expense deleted');
   } catch (err) { next(err); }
 };

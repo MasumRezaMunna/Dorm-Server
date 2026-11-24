@@ -3,6 +3,7 @@ import Member from '../models/member.model.js';
 import { sendSuccess, parsePagination, buildPagination } from '../utils/apiResponse.js';
 import { notFoundError, AppError } from '../utils/AppError.js';
 import { createNotification } from './notification.controller.js';
+import { cacheInvalidator } from '../utils/cacheInvalidator.js';
 
 export const getRooms = async (req, res, next) => {
   try {
@@ -42,6 +43,10 @@ export const getMyRoom = async (req, res, next) => {
 export const createRoom = async (req, res, next) => {
   try {
     const room = await Room.create(req.body);
+
+    // Invalidate room & dashboard caches
+    await cacheInvalidator.invalidateRooms();
+
     sendSuccess(res, room, 'Room created', 201);
   } catch (err) { next(err); }
 };
@@ -50,6 +55,10 @@ export const updateRoom = async (req, res, next) => {
   try {
     const room = await Room.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
     if (!room) return next(notFoundError('Room'));
+
+    // Invalidate room & dashboard caches
+    await cacheInvalidator.invalidateRooms({ id: req.params.id });
+
     sendSuccess(res, room, 'Room updated');
   } catch (err) { next(err); }
 };
@@ -60,6 +69,10 @@ export const deleteRoom = async (req, res, next) => {
     if (!room) return next(notFoundError('Room'));
     if (room.members.length > 0) return next(new AppError('Cannot delete a room with assigned members', 400));
     await room.deleteOne();
+
+    // Invalidate room & dashboard caches
+    await cacheInvalidator.invalidateRooms({ id: req.params.id });
+
     sendSuccess(res, null, 'Room deleted');
   } catch (err) { next(err); }
 };
@@ -81,6 +94,9 @@ export const assignMember = async (req, res, next) => {
       createNotification(member.userId, 'Room Assigned', `You have been assigned to Room ${room.roomNumber}`, 'system', '/member/room');
     }
     
+    // Invalidate room, member, and dashboard caches
+    await cacheInvalidator.invalidateRooms({ id: req.params.id });
+
     sendSuccess(res, room, 'Member assigned to room');
   } catch (err) { next(err); }
 };
@@ -94,6 +110,10 @@ export const vacateMember = async (req, res, next) => {
     if (member) {
       createNotification(member.userId, 'Room Vacated', `You have been vacated from Room ${room.roomNumber}`, 'system', '/member/room');
     }
+
+    // Invalidate room, member, and dashboard caches
+    await cacheInvalidator.invalidateRooms({ id: req.params.id });
+
     sendSuccess(res, room, 'Member vacated from room');
   } catch (err) { next(err); }
 };

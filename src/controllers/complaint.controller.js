@@ -4,6 +4,7 @@ import { sendSuccess, parsePagination, buildPagination } from '../utils/apiRespo
 import { notFoundError } from '../utils/AppError.js';
 import User from '../models/user.model.js';
 import { createNotification } from './notification.controller.js';
+import { cacheInvalidator } from '../utils/cacheInvalidator.js';
 
 export const getComplaints = async (req, res, next) => {
   try {
@@ -49,6 +50,9 @@ export const createComplaint = async (req, res, next) => {
       createNotification(mgr._id, 'New Complaint Submitted', `${member.userId.displayName || 'A member'} submitted a new complaint`, 'complaint', '/manager/complaints');
     });
     
+    // Invalidate complaint & dashboard caches
+    await cacheInvalidator.invalidateComplaints({ userId: req.user._id });
+
     sendSuccess(res, complaint, 'Complaint submitted', 201);
   } catch (err) { next(err); }
 };
@@ -57,6 +61,10 @@ export const updateComplaint = async (req, res, next) => {
   try {
     const complaint = await Complaint.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!complaint) return next(notFoundError('Complaint'));
+
+    // Invalidate complaint & dashboard caches
+    await cacheInvalidator.invalidateComplaints({ id: req.params.id });
+
     sendSuccess(res, complaint, 'Complaint updated');
   } catch (err) { next(err); }
 };
@@ -75,6 +83,9 @@ export const resolveComplaint = async (req, res, next) => {
       createNotification(member.userId, 'Complaint Resolved', `Your complaint has been resolved by a manager`, 'complaint', '/member/complaints');
     }
     
+    // Invalidate complaint & dashboard caches
+    await cacheInvalidator.invalidateComplaints({ id: req.params.id });
+
     sendSuccess(res, complaint, 'Complaint resolved');
   } catch (err) { next(err); }
 };
@@ -83,6 +94,10 @@ export const deleteComplaint = async (req, res, next) => {
   try {
     const complaint = await Complaint.findByIdAndDelete(req.params.id);
     if (!complaint) return next(notFoundError('Complaint'));
+
+    // Invalidate complaint & dashboard caches
+    await cacheInvalidator.invalidateComplaints({ id: req.params.id });
+
     sendSuccess(res, null, 'Complaint deleted');
   } catch (err) { next(err); }
 };

@@ -4,6 +4,7 @@ import { sendSuccess, parsePagination, buildPagination } from '../utils/apiRespo
 import { notFoundError, AppError } from '../utils/AppError.js';
 import Member from '../models/member.model.js';
 import { createNotification } from './notification.controller.js';
+import { cacheInvalidator } from '../utils/cacheInvalidator.js';
 
 export const getPayments = async (req, res, next) => {
   try {
@@ -47,6 +48,9 @@ export const createPayment = async (req, res, next) => {
       createNotification(member.userId, 'Payment Received', `Payment of ৳${amount} recorded to your account`, 'payment', '/dashboard');
     }
     
+    // Invalidate payment and financial/dashboard caches
+    await cacheInvalidator.invalidatePayments({ memberId });
+
     sendSuccess(res, payment, 'Payment recorded', 201);
   } catch (err) { next(err); }
 };
@@ -82,6 +86,10 @@ export const updatePayment = async (req, res, next) => {
     if (note !== undefined) payment.note = note;
     
     await payment.save();
+
+    // Invalidate payment and financial/dashboard caches
+    await cacheInvalidator.invalidatePayments({ memberId: payment.memberId });
+
     sendSuccess(res, payment, 'Payment updated');
   } catch (err) { next(err); }
 };
@@ -99,7 +107,12 @@ export const deletePayment = async (req, res, next) => {
       }
     }
     
+    const memberId = payment.memberId;
     await Payment.findByIdAndDelete(req.params.id);
+
+    // Invalidate payment and financial/dashboard caches
+    await cacheInvalidator.invalidatePayments({ memberId });
+
     sendSuccess(res, null, 'Payment deleted');
   } catch (err) { next(err); }
 };

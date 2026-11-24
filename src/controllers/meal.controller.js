@@ -7,6 +7,7 @@ import WeeklyMealPlan from '../models/weeklyMealPlan.model.js';
 import MonthlyBalance from '../models/monthlyBalance.model.js';
 import { sendSuccess, parsePagination, buildPagination } from '../utils/apiResponse.js';
 import { notFoundError } from '../utils/AppError.js';
+import { cacheInvalidator } from '../utils/cacheInvalidator.js';
 
 const roundTwo = (num) => Math.round((num || 0) * 100) / 100;
 
@@ -372,6 +373,10 @@ export const createMealEntry = async (req, res, next) => {
     const year = parseInt(y, 10);
     const date = new Date(rawDate);
     const entry = await MealEntry.create({ ...req.body, date, month, year, addedBy: req.user._id });
+    
+    // Invalidate meal & financial caches
+    await cacheInvalidator.invalidateMeals({ memberId: req.body.memberId });
+
     sendSuccess(res, entry, 'Meal entry created', 201);
   } catch (err) { next(err); }
 };
@@ -380,6 +385,10 @@ export const updateMealEntry = async (req, res, next) => {
   try {
     const entry = await MealEntry.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!entry) return next(notFoundError('Meal entry'));
+
+    // Invalidate meal & financial caches
+    await cacheInvalidator.invalidateMeals({ memberId: entry.memberId });
+
     sendSuccess(res, entry, 'Meal entry updated');
   } catch (err) { next(err); }
 };
@@ -388,6 +397,10 @@ export const deleteMealEntry = async (req, res, next) => {
   try {
     const entry = await MealEntry.findByIdAndDelete(req.params.id);
     if (!entry) return next(notFoundError('Meal entry'));
+
+    // Invalidate meal & financial caches
+    await cacheInvalidator.invalidateMeals({ memberId: entry.memberId });
+
     sendSuccess(res, null, 'Meal entry deleted');
   } catch (err) { next(err); }
 };
@@ -430,6 +443,9 @@ export const createBulkMealEntries = async (req, res, next) => {
     if (operations.length > 0) {
       await MealEntry.bulkWrite(operations);
     }
+
+    // Invalidate meal & financial caches
+    await cacheInvalidator.invalidateMeals();
 
     sendSuccess(res, null, 'Bulk meal entries saved successfully', 201);
   } catch (err) { next(err); }
@@ -516,6 +532,9 @@ export const upsertWeeklyPlan = async (req, res, next) => {
         updatedBy: req.user._id
       });
     }
+
+    // Invalidate weekly meal plan caches
+    await cacheInvalidator.invalidateWeeklyPlan();
     
     sendSuccess(res, plan, 'Weekly meal plan updated');
   } catch (err) { next(err); }

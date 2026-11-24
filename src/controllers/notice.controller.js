@@ -3,6 +3,7 @@ import { sendSuccess, parsePagination, buildPagination } from '../utils/apiRespo
 import { notFoundError } from '../utils/AppError.js';
 import Member from '../models/member.model.js';
 import { createNotification } from './notification.controller.js';
+import { cacheInvalidator } from '../utils/cacheInvalidator.js';
 
 export const getNotices = async (req, res, next) => {
   try {
@@ -35,6 +36,9 @@ export const createNotice = async (req, res, next) => {
       });
     }
 
+    // Invalidate notice and dashboard caches
+    await cacheInvalidator.invalidateNotices({ id: notice._id });
+
     sendSuccess(res, notice, 'Notice created', 201);
   } catch (err) { next(err); }
 };
@@ -43,6 +47,10 @@ export const updateNotice = async (req, res, next) => {
   try {
     const notice = await Notice.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!notice) return next(notFoundError('Notice'));
+
+    // Invalidate notice and dashboard caches
+    await cacheInvalidator.invalidateNotices({ id: req.params.id });
+
     sendSuccess(res, notice, 'Notice updated');
   } catch (err) { next(err); }
 };
@@ -51,6 +59,10 @@ export const deleteNotice = async (req, res, next) => {
   try {
     const notice = await Notice.findByIdAndDelete(req.params.id);
     if (!notice) return next(notFoundError('Notice'));
+
+    // Invalidate notice and dashboard caches
+    await cacheInvalidator.invalidateNotices({ id: req.params.id });
+
     sendSuccess(res, null, 'Notice deleted');
   } catch (err) { next(err); }
 };
@@ -61,6 +73,10 @@ export const togglePin = async (req, res, next) => {
     if (!notice) return next(notFoundError('Notice'));
     notice.isPinned = !notice.isPinned;
     await notice.save();
+
+    // Invalidate notice caches
+    await cacheInvalidator.invalidateNotices({ id: req.params.id });
+
     sendSuccess(res, notice, `Notice ${notice.isPinned ? 'pinned' : 'unpinned'}`);
   } catch (err) { next(err); }
 };

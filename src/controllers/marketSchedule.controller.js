@@ -2,6 +2,7 @@ import MarketSchedule from '../models/marketSchedule.model.js';
 import Member from '../models/member.model.js';
 import { sendSuccess, parsePagination, buildPagination } from '../utils/apiResponse.js';
 import { notFoundError, validationError, conflictError } from '../utils/AppError.js';
+import { cacheInvalidator } from '../utils/cacheInvalidator.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -58,6 +59,9 @@ export const createMarketSchedule = async (req, res, next) => {
       note: note || null,
       createdBy: { userId: req.user._id, name: req.user.displayName || req.user.name },
     });
+
+    // Invalidate market schedule caches
+    await cacheInvalidator.invalidateMarketSchedules();
 
     sendSuccess(res, schedule, 'Market schedule created successfully', 201);
   } catch (err) {
@@ -171,6 +175,9 @@ export const updateMarketSchedule = async (req, res, next) => {
     );
     if (!schedule) return next(notFoundError('Market schedule'));
 
+    // Invalidate market schedule caches
+    await cacheInvalidator.invalidateMarketSchedules();
+
     sendSuccess(res, schedule, 'Market schedule updated');
   } catch (err) {
     next(err);
@@ -184,6 +191,10 @@ export const deleteMarketSchedule = async (req, res, next) => {
   try {
     const schedule = await MarketSchedule.findByIdAndDelete(req.params.id);
     if (!schedule) return next(notFoundError('Market schedule'));
+
+    // Invalidate market schedule caches
+    await cacheInvalidator.invalidateMarketSchedules();
+
     sendSuccess(res, null, 'Market schedule deleted');
   } catch (err) {
     next(err);

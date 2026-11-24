@@ -3,6 +3,7 @@ import Member from '../models/member.model.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 import { notFoundError } from '../utils/AppError.js';
 import { parsePagination, buildPagination } from '../utils/apiResponse.js';
+import { cacheInvalidator } from '../utils/cacheInvalidator.js';
 
 export const getUsers = async (req, res, next) => {
   try {
@@ -42,6 +43,10 @@ export const updateUserRole = async (req, res, next) => {
     const { role } = req.body;
     const user = await User.findByIdAndUpdate(req.params.id, { role }, { new: true, runValidators: true });
     if (!user) return next(notFoundError('User'));
+
+    // Invalidate user caches
+    await cacheInvalidator.invalidateUsers({ id: req.params.id });
+
     sendSuccess(res, user, 'User role updated');
   } catch (err) { next(err); }
 };
@@ -50,6 +55,10 @@ export const deactivateUser = async (req, res, next) => {
   try {
     const user = await User.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
     if (!user) return next(notFoundError('User'));
+
+    // Invalidate user & member caches
+    await cacheInvalidator.invalidateUsers({ id: req.params.id });
+
     sendSuccess(res, user, 'User deactivated');
   } catch (err) { next(err); }
 };

@@ -1,5 +1,6 @@
 import Settings from '../models/settings.model.js';
 import { sendSuccess } from '../utils/apiResponse.js';
+import { cacheInvalidator } from '../utils/cacheInvalidator.js';
 
 export const getSettings = async (req, res, next) => {
   try {
@@ -19,6 +20,10 @@ export const updateSettings = async (req, res, next) => {
       Object.assign(settings, req.body, { updatedBy: req.user._id });
       await settings.save();
     }
+
+    // Invalidate settings & calculations/financial caches
+    await cacheInvalidator.invalidateSettings();
+
     sendSuccess(res, settings, 'Settings updated');
   } catch (err) { next(err); }
 };
